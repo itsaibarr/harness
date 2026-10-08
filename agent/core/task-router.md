@@ -59,6 +59,7 @@ D1 tasks: one line is enough — `**Workflow:** quick edit — will typecheck + 
 | review (default) | `/code-review` once pre-merge — not gstack `review`, not mattpocock `code-review` |
 | tdd | test-driven-development (installed core) |
 | browse (gstack) | call the daemon binary from bash — never load the 27k-token skill |
+| `/i-have-adhd` | explicit-only output-style (ADHD) — never auto-load; Tier C; off-ramps `stop adhd mode` / `normal mode` |
 
 ## Worked examples
 
