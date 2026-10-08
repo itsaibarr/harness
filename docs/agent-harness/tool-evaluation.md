@@ -88,3 +88,11 @@ Trigger: user corrections — the Graphify staleness argument was void (repo sim
 | Graphify | Reject | **Adopt as on-demand CLI, break-glass** — build-once + bash-query for unfamiliar/undocumented code (inherited repos, large dependencies, client code); zero resident cost. Marginal for the user's own documented repos |
 | MemPalace | Reject | **Optional supplement, CLI-only** — local semantic+BM25 grep over past-session transcripts ("find the exact words from that session"), ~0 always-on tokens, no MCP server. **Cannot replace capture + decision recall**: constitutionally verbatim, no distillation, no decision records, capture demonstrably fills with boilerplate |
 | Octarin replacement by MemPalace+Graphify | (question) | **Not viable** — neither tool stores "what we decided and why." If Octarin is removed (solo-dev call), the functional replacement is local decision-log files written by /wrap-session + native Claude Code memory, with MemPalace CLI as an optional transcript-search supplement |
+
+---
+
+# Round 4 — i-have-adhd adoption (2026-10-08)
+
+| Item | Evidence | Decision |
+| --- | --- | --- |
+| i-have-adhd (ayghri/i-have-adhd) | Vendored pinned master `723af7d9afaf43eb871dbcce6129e2bf80de90d5` + pi/OpenCode mirrors under `agent/core/framework/skills/i-have-adhd/`; matches harness evidence rule and minimal-core principle; upstream `disable-model-invocation` honored; collisions settled: harness banner first, then ADHD action-first — harness wins per upstream break-rule #6 | **Adopt as Tier C explicit skill** — router alias `/i-have-adhd`, explicit-only (never auto-load); off-ramps `stop adhd mode` / `normal mode`; recovery: `npx skills add ayghri/i-have-adhd`, `pi install https://github.com/ayghri/i-have-adhd`, or copy master to the global skill dir |
