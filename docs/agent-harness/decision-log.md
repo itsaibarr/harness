@@ -51,4 +51,4 @@ Full evidence for every row: `tool-evaluation.md` (Rounds 1–2). Status: active
 - Decision: vendor pinned master (`723af7d9afaf43eb871dbcce6129e2bf80de90d5`) + pi/OpenCode mirrors; router alias explicit-only.
 - Why: matches harness evidence rule and minimal-core principle; upstream `disable-model-invocation` honored.
 - Collisions settled: harness banner first, then ADHD action-first; harness wins per upstream break-rule #6.
-- Recovery: missing skill dir fails loud — reinstall via `npx skills add ayghri/i-have-adhd`, `pi install https://github.com/ayghri/i-have-adhd`, or copy master to the global skill dir.
+- Recovery: missing skill dir fails loud — reinstall via `npx skills add ayghri/i-have-adhd`, `pi install https://github.com/ayghri/i-have-adhd`, or copy master to the global skill dir. The Claude command surface additionally needs `command/i-have-adhd.md` placed at `.claude/commands/` per the README restore convention (skills → `~/.claude/skills`, commands → `~/.claude/commands`). Note `npx skills add ayghri/i-have-adhd` installs floating HEAD, not the pin — re-pin by re-copying the master at 723af7d9afaf43eb871dbcce6129e2bf80de90d5.

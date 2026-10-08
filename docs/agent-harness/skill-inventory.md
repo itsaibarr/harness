@@ -60,4 +60,4 @@ Date: 2026-08-31. Companion to `agent/core/task-router.md`. Scores cited for age
 | Duplicate seats, loser declared | mattpocock tdd/code-review/grilling/to-spec/to-tickets/implement; gstack research; gstack `browse` SKILL (binary only — 27k tokens) | Framework-comparison winners installed; browse decision-log row |
 | Setup one-shots | setup-*, sync-gbrain, gstack-upgrade, find-skills, freeze/unfreeze, connect-chrome, open-gstack-browser | User-initiated by nature |
 | Removed/unused capture layers | goldfish, screenpipe-api/cli | Removed or zero observed use (decision log 2026-08-26) |
-| `i-have-adhd` (output-style for ADHD readers) | `/i-have-adhd` / `stop adhd mode` | small; banner-vs-action-first; `concrete-answers` overlap; never auto-load; explicit ask only |
+| `i-have-adhd` (output-style for ADHD readers) | `/i-have-adhd` / `stop adhd mode` | small; banner-vs-action-first; `concrete-answers` overlap; never auto-load; explicit ask only — `disable-model-invocation` honored on Claude only (OpenCode ignores unknown frontmatter fields, so model-invocable once installed; `permission.skill: deny` is the lever if ever needed) |
