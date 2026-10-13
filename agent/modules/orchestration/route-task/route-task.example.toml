@@ -1,0 +1,32 @@
+# Copy to route-task.toml (git-ignored) and edit. Every key shown is optional; values are the defaults.
+state_dir = "~/.route-task"
+
+[economy]
+model = "opencode/muse-spark-1.3-contributor-free"  # free; trains on prompts (see privacy guard)
+trains_on_data = true
+private_model = ""   # model for `privacy: private` tasks; e.g. a zero-retention provider
+
+[evaluator]
+model = "sonnet"
+
+[premium]
+model = "opus"
+
+[limits]
+worker_attempts = 2
+premium_per_task = 1
+worker_timeout_s = 1800
+claude_timeout_s = 1800
+gate_timeout_s = 900
+
+[quota]            # fractions of observed utilization (0-1); nothing is converted to tokens or dollars
+evaluator_5h = 0.75
+evaluator_7d = 0.90
+premium_5h = 0.60
+premium_7d = 0.80
+pacing = true       # refuse unattended Claude spend when 7d utilization > week_elapsed + pacing_slack
+pacing_slack = 0.15
+probe_ttl_s = 60
+
+[env]
+extra = []          # extra environment variable names to pass to children
