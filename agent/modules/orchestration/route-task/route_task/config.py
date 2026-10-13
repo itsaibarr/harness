@@ -29,6 +29,7 @@ DEFAULTS = {
         "probe_ttl_s": 60,
         "enabled": True,
     },
+    "notify": {"enabled": True},  # macOS toast when a run finishes, parks or needs a human
     "routing": {"classifier": False},  # one cheap economy-model call for `tier: auto` tasks no rule matched
     "routes": [  # first match wins; whole-word, case-insensitive; only applies to `tier: auto`
         {"tier": "premium", "keywords": ["architecture", "architectural", "security", "threat model",

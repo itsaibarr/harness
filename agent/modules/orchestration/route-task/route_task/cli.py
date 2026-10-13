@@ -6,7 +6,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import batch, config, events, guard, run, task
+from . import batch, config, events, guard, notify, run, task
 from .agents import Agents, ClaudeAgent, LockedAgent, OpenCodeAgent
 
 
@@ -24,6 +24,10 @@ def _agents(cfg):
     return Agents(OpenCodeAgent(env), LockedAgent(ClaudeAgent(env), cfg.state_dir / "claude.lock"))
 
 
+def _notifier(cfg):
+    return notify.send if cfg.notify.enabled else None
+
+
 def _line(r):
     s = r.state
     return f"{r.path.name}  {s['status']}  {s.get('branch', '')}  report: {r.path / 'report.md'}"
@@ -39,7 +43,7 @@ def _cmd_run(args, cfg):
             worst = 1
     wait = args.wait if args.wait is not None else len(tasks) > 1
     runs = batch.run_batch(tasks, cfg, _agents(cfg), jobs=args.jobs, repo=args.repo,
-                           should_stop=(cfg.state_dir / "STOP").exists, wait=wait)
+                           should_stop=(cfg.state_dir / "STOP").exists, wait=wait, notify=_notifier(cfg))
     for r in runs:
         print(_line(r))
         worst = worst or (0 if r.state["status"] == "done" else 1)
@@ -49,7 +53,8 @@ def _cmd_run(args, cfg):
 def _cmd_resume(args, cfg):
     try:
         r = events.RunDir.open(cfg.state_dir / "runs", args.run_id)
-        r = run.resume_task(r, cfg, _agents(cfg), should_stop=(cfg.state_dir / "STOP").exists, wait=bool(args.wait))
+        r = run.resume_task(r, cfg, _agents(cfg), should_stop=(cfg.state_dir / "STOP").exists, wait=bool(args.wait),
+                            notify=_notifier(cfg))
     except (FileNotFoundError, ValueError) as e:
         print(e, file=sys.stderr)
         return 1

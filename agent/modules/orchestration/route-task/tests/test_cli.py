@@ -21,7 +21,7 @@ class CliTest(unittest.TestCase):
         self.repo = make_repo(self.root)
         self.state = self.root / "state"
         self.cfg = self.root / "cfg.toml"
-        self.cfg.write_text(f'state_dir = "{self.state}"\n[economy]\ntrains_on_data = false\n[evaluator]\nenabled = false\n[quota]\nenabled = false\n'
+        self.cfg.write_text(f'state_dir = "{self.state}"\n[economy]\ntrains_on_data = false\n[notify]\nenabled = false\n[evaluator]\nenabled = false\n[quota]\nenabled = false\n'
                             '[env]\nextra = ["STUB_WRITE", "STUB_LOG", "STUB_OC", "STUB_CL", "STUB_OC_SLEEP"]\n')
         self.task = self.root / "task.md"
         self.task.write_text(f"---\ntitle: Make out\nrepo: {self.repo}\nprivacy: open\ngate:\n  - test -f out.txt\n---\nCreate out.txt.")
@@ -99,7 +99,7 @@ class CliStubBase(unittest.TestCase):
         self.repo = make_repo(self.root)
         self.state = self.root / "state"
         self.cfg = self.root / "cfg.toml"
-        self.cfg.write_text(f'state_dir = "{self.state}"\n[economy]\ntrains_on_data = false\n'
+        self.cfg.write_text(f'state_dir = "{self.state}"\n[economy]\ntrains_on_data = false\n[notify]\nenabled = false\n'
                             '[env]\nextra = ["STUB_WRITE", "STUB_LOG", "STUB_OC", "STUB_CL", "STUB_5H", "STUB_7D", "STUB_STRUCT"]\n')
         self.task = self.root / "task.md"
         self.task.write_text(f"---\ntitle: Make out\nrepo: {self.repo}\nprivacy: open\ngate:\n  - test -f out.txt\n---\nx")
@@ -147,7 +147,7 @@ class CliRecoveryTest(CliStubBase):
 
     def setUp(self):
         super().setUp()
-        self.cfg.write_text(f'state_dir = "{self.state}"\n[economy]\ntrains_on_data = false\n[quota]\nenabled = false\n'
+        self.cfg.write_text(f'state_dir = "{self.state}"\n[economy]\ntrains_on_data = false\n[notify]\nenabled = false\n[quota]\nenabled = false\n'
                             '[env]\nextra = ["STUB_WRITE", "STUB_LOG", "STUB_OC", "STUB_CL", "STUB_STRUCT"]\n')
 
     def tearDown(self):
@@ -182,6 +182,18 @@ class CliRecoveryTest(CliStubBase):
         self.assertEqual(events.count('"type": "stage_start", "stage": "worker"'), 1)
         self.assertIn("run_resumed", events)
         self.assertEqual(json.loads((run_dir / "state.json").read_text())["status"], "done")
+
+    def test_stop_kills_the_inflight_child_and_marks_the_run_stopped(self):
+        p = subprocess.Popen([sys.executable, "-m", "route_task", "run", str(self.task), "--config", str(self.cfg), "--no-wait"],
+                             env={**self.env, "STUB_OC": "hang"}, cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        run_dir = self.wait_for('"stage": "worker"')
+        time.sleep(0.5)
+        self.assertEqual(subprocess.run(["pgrep", "-f", str(STUBS / "opencode")], capture_output=True).returncode, 0)  # child alive
+        self.cli("stop", "--config", str(self.cfg))
+        out, err = p.communicate(timeout=30)
+        self.assertEqual(json.loads((run_dir / "state.json").read_text())["status"], "stopped", out + err)
+        time.sleep(0.5)
+        self.assertNotEqual(subprocess.run(["pgrep", "-f", str(STUBS / "opencode")], capture_output=True).returncode, 0)  # child killed
 
     def test_kill_during_first_worker_step_is_resumable(self):
         run_dir = self.kill_during('"stage": "worker"', STUB_OC="hang")

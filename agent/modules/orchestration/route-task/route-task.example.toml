@@ -30,6 +30,9 @@ pacing_slack = 0.15
 probe_ttl_s = 60
 enabled = true       # false = never read or gate on quota (tests only)
 
+[notify]
+enabled = true     # macOS toast when a run finishes, parks or needs a human
+
 [routing]
 classifier = false   # true: one economy-model call decides economy/premium for `tier: auto` tasks no rule matched
 

@@ -3,6 +3,7 @@
 worker -> gate -> evaluator -> (retry with feedback | escalate) -> premium -> gate -> evaluator once -> done | needs_human
 """
 import time
+from datetime import datetime
 from dataclasses import asdict
 from pathlib import Path
 
@@ -23,9 +24,9 @@ WAIT_CHUNK_S = 30
 
 
 class Ctx:
-    def __init__(self, task, cfg, agents, run, wt, should_stop, economy_model, quota, tier):
+    def __init__(self, task, cfg, agents, run, wt, should_stop, economy_model, quota, tier, notify=None):
         self.task, self.cfg, self.agents, self.run, self.wt = task, cfg, agents, run, wt
-        self.should_stop, self.economy_model, self.quota = should_stop, economy_model, quota
+        self.should_stop, self.economy_model, self.quota, self.notify = should_stop, economy_model, quota, notify
         self.env = guard.child_env(cfg)
         self.history, self.attempts, self.gate_text, self.issues = [], {"worker": 0, "premium": 0}, "", []
         self.next = "premium" if tier == "premium" else "worker"
@@ -187,6 +188,14 @@ def _drive(ctx, wait, sleep, now):
     return _finish(ctx, status)
 
 
+def _notify(notify, title, status, detail=""):
+    if notify and status != "stopped":  # the user caused a stop; no toast needed
+        try:
+            notify(f"route-task: {title}", f"{status}{detail}")
+        except Exception:
+            pass  # a broken notifier must never break a run
+
+
 def _finish(ctx, status):
     parked = status == "waiting_quota"
     extra = {"resume_after": ctx.resume_after, "quota_reason": ctx.quota_reason} if parked else {}
@@ -194,11 +203,13 @@ def _finish(ctx, status):
     ctx.run.update(status=status, stage=status if parked else "finished", **extra)
     ctx.run.log("run_parked" if parked else "run_finished", status=status)
     report.write(ctx.run)
+    detail = f" (resume after {datetime.fromtimestamp(ctx.resume_after):%a %H:%M}: {ctx.quota_reason})" if parked and ctx.resume_after else ""
+    _notify(ctx.notify, ctx.task.title, status, detail)
     return ctx.run
 
 
 def run_task(task, cfg, agents, repo=None, should_stop=None, run_id=None, is_public=None, quota=None,
-             wait=False, sleep=time.sleep, now=time.time):
+             wait=False, sleep=time.sleep, now=time.time, notify=None):
     should_stop = should_stop or (lambda: False)
     run_id = run_id or events.new_run_id(task.title)
     repo = Path(task.repo or repo or ".").expanduser().resolve()
@@ -217,6 +228,7 @@ def run_task(task, cfg, agents, repo=None, should_stop=None, run_id=None, is_pub
             run.log("privacy_guard", decision="refused", model=cfg.economy.model, privacy=task.privacy, reason=str(e))
             run.log("run_finished", status="failed")
             report.write(run)
+            _notify(notify, task.title, "failed", f": {run.state['error']}")
             return run
     if tier is None:
         tier = "economy"
@@ -234,21 +246,22 @@ def run_task(task, cfg, agents, repo=None, should_stop=None, run_id=None, is_pub
         run.update(status="failed", error=str(e))
         run.log("run_finished", status="failed")
         report.write(run)
+        _notify(notify, task.title, "failed", f": {e}")
         return run
     run.update(worktree=str(wt.path), branch=wt.branch, base_sha=wt.base_sha, economy_model=economy_model)
-    ctx = Ctx(task, cfg, agents, run, wt, should_stop, economy_model, quota or default_quota(cfg, agents), tier)
+    ctx = Ctx(task, cfg, agents, run, wt, should_stop, economy_model, quota or default_quota(cfg, agents), tier, notify)
     ctx.save()  # persist `next` before the first stage so even a crash during it is resumable
     return _drive(ctx, wait, sleep, now)
 
 
-def resume_task(run, cfg, agents, should_stop=None, quota=None, wait=False, sleep=time.sleep, now=time.time):
+def resume_task(run, cfg, agents, should_stop=None, quota=None, wait=False, sleep=time.sleep, now=time.time, notify=None):
     """Continue a parked / stopped / interrupted run from its persisted `next` step (completed stages are not redone)."""
     s = run.state
     if s["status"] in ("done", "needs_human", "failed"):
         raise ValueError(f"run {s['run_id']} is {s['status']}; nothing to resume")
     wt = worktree.open_(s["repo"], s["run_id"], cfg.state_dir / "worktrees", s["base_sha"])
     ctx = Ctx(Task(**s["task"]), cfg, agents, run, wt, should_stop or (lambda: False), s["economy_model"],
-              quota or default_quota(cfg, agents), s.get("tier", "economy"))
+              quota or default_quota(cfg, agents), s.get("tier", "economy"), notify)
     ctx.history, ctx.attempts = s["history"], s["attempts"]
     ctx.gate_text, ctx.issues, ctx.error = s.get("gate_text", ""), s.get("issues", []), s.get("error", "")
     ctx.next, ctx.last_stage = s["next"], s.get("last_stage")
