@@ -29,6 +29,19 @@ class EconomyModelTest(unittest.TestCase):
     def test_private_task_uses_private_model_when_configured(self):
         self.assertEqual(guard.economy_model(cfg(private_model="fw/x"), t("private"), lambda: False), "fw/x")
 
+    def test_explicit_acceptance_lets_private_tasks_use_the_training_model(self):
+        c = cfg()
+        c.economy.accept_training_on_private = True
+        self.assertEqual(guard.economy_model(c, t("private"), lambda: False), c.economy.model)
+
+    def test_private_model_still_wins_over_acceptance(self):
+        c = cfg(private_model="fw/x")
+        c.economy.accept_training_on_private = True
+        self.assertEqual(guard.economy_model(c, t("private"), lambda: False), "fw/x")
+
+    def test_acceptance_is_off_by_default(self):
+        self.assertFalse(config.load(None).economy.accept_training_on_private)
+
     def test_private_task_on_public_repo_may_use_training_model(self):
         self.assertEqual(guard.economy_model(cfg(), t("private"), lambda: True), cfg().economy.model)
 

@@ -11,6 +11,7 @@ DEFAULTS = {
         "model": "opencode/muse-spark-1.3-contributor-free",
         "trains_on_data": True,
         "private_model": "",  # used for privacy: private tasks when `model` trains on data
+        "accept_training_on_private": False,  # explicit user opt-in: private tasks may go to a training-data model
     },
     "evaluator": {"model": "sonnet", "enabled": True},
     "premium": {"model": "opus"},

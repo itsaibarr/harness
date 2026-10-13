@@ -17,8 +17,7 @@ def emit(t, part):
     print(json.dumps({"type": t, "timestamp": 1, "sessionID": sid, "part": part}), flush=True)
 
 if mode == "hang":
-    emit("step_start", {"type": "step-start"})
-    time.sleep(120)
+    time.sleep(120)  # print nothing: a parent SIGKILLed mid-test would turn a later print into EPIPE and kill us
 elif mode == "fail":
     print("boom: provider unavailable", file=sys.stderr)
     sys.exit(1)

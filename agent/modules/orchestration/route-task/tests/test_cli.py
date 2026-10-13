@@ -168,6 +168,9 @@ class CliRecoveryTest(CliStubBase):
         p = subprocess.Popen([sys.executable, "-m", "route_task", "run", str(self.task), "--config", str(self.cfg), "--no-wait"],
                              env={**self.env, **env}, cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         run_dir = self.wait_for(marker)
+        t0 = time.time()
+        while not (run_dir / "children.json").exists() and time.time() - t0 < 10:  # stage_start is logged just before the spawn
+            time.sleep(0.05)
         p.send_signal(signal.SIGKILL)
         p.wait()
         p.stdout.close()

@@ -73,8 +73,8 @@ def economy_model(cfg, task, is_public):
         return e.model
     if e.private_model:
         return e.private_model
-    if is_public():
+    if e.accept_training_on_private or is_public():
         return e.model
     raise PrivacyRefused(
         f"{e.model} trains on prompts and this task is private. Set `privacy: open` in the task file, "
-        "or set economy.private_model in the config to a zero-retention model.")
+        "or set economy.private_model (a zero-retention model) or economy.accept_training_on_private = true in the config.")

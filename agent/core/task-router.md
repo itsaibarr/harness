@@ -25,6 +25,7 @@ Read this when the route for a prompt is not obvious from the CLAUDE.md routing 
 | 8 | Automation / browser workflow | D2–D4 | browserclaw/BrowserOS (outreach-scoped); automation module (verify-send) | scrape, wizard, observability | dev-loop browser tools | Mailpit dry-run pass before ANY live send | **Yes** — anything that sends/posts |
 | 9 | Planning / personal productivity | D1–D2, no code | — (plain reasoning) | planning-and-task-breakdown, make-pdf, diagram | ALL engineering skills | readable user-facing artifact | No |
 | 10 | High-risk change | D4 | audit + careful; deprecation-and-migration (schema); wizard (creds) | observability | autonomy of any kind | staged verify + stated rollback | **Yes — always, before execution** |
+| 11 | Delegable bounded implementation (unattended, batch, "while I'm away", "do this cheaply") | D2 | route-task: task file with the repo's real gate commands → `route-task run` (background) → report from `route-task report` | `--jobs N` for several independent tasks | spec/plan machinery; sight loop unless it is UI (then not this route) | gate commands + Sonnet evaluator pass; branch `rt/<id>` + report.md; never auto-push | **No** to start, but any high-risk trigger ⇒ D4 and this route is not used |
 
 ## High-risk triggers (any one ⇒ D4, regardless of surface category)
 
@@ -73,4 +74,5 @@ D1 tasks: one line is enough — `**Workflow:** quick edit — will typecheck + 
 | "Clean up unused files and oversized docs" | 6 / D2 | audit → classify (keep/archive/delete) → **confirm deletions** → execute → tests green |
 | "Research whether GEO or AI automations" | 7 / D2-no-code | research (cited) → decision framework → concrete-answers recommendation |
 | "Deploy a database migration to production" | 10 / D4 | audit → plan → **explicit confirmation** → deprecation-and-migration pattern → staged verify → rollback stated |
+| "Implement these four well-tested utility functions while I'm away" | 11 / D2 | task files with gate commands → `route-task run a.md b.md c.md d.md --jobs 4` (background) → report branches; no push |
 | "Create a 12-week study plan" | 9 / D1–D2 | plain reasoning → structured plan artifact; zero engineering skills |
