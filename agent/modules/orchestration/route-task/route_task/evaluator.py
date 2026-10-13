@@ -73,12 +73,12 @@ def _prompt(task, diff, gate_summary):
         gate=gate_summary or "(no gate commands)", diff=diff or "(empty diff)")
 
 
-def evaluate(agent, task, wt_path, diff, gate_summary, model, timeout, should_stop=None):
+def evaluate(agent, task, wt_path, diff, gate_summary, model, timeout, should_stop=None, on_start=None):
     prompt = _prompt(task, diff, gate_summary)
     v = Verdict()
     for _ in range(2):  # one retry, only for a malformed verdict
         r = agent.run(prompt, wt_path, model=model, mode="readonly", schema=VERDICT_SCHEMA,
-                      timeout=timeout, should_stop=should_stop)
+                      timeout=timeout, should_stop=should_stop, on_start=on_start)
         v.rate_limit = r.rate_limit or v.rate_limit
         v.duration_s += r.duration_s
         v.cost_usd = (v.cost_usd or 0) + (r.cost_usd or 0)

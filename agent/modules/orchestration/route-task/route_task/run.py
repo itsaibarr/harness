@@ -2,7 +2,13 @@
 
 worker -> gate -> evaluator -> (retry with feedback | escalate) -> premium -> gate -> evaluator once -> done | needs_human
 """
+import fcntl
+import json
+import os
+import signal
+import subprocess
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from dataclasses import asdict
 from pathlib import Path
@@ -23,6 +29,43 @@ PROBE_PROMPT = "Reply with: ok"
 WAIT_CHUNK_S = 30
 
 
+class RunBusy(ValueError):
+    pass
+
+
+@contextmanager
+def driver_lock(run):
+    """Exactly one process may drive a run. flock is released by the OS if the driver is SIGKILLed."""
+    with open(run.path / "driver.lock", "a+") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RunBusy(f"run {run.path.name} is being driven by another process; stop it first (route-task stop)") from None
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def reap_orphans(run):
+    """Kill agent/gate process groups a SIGKILLed driver left behind (they would keep editing the worktree)."""
+    f = run.path / "children.json"
+    if not f.exists():
+        return
+    for pid, exe in json.loads(f.read_text()):
+        cmd = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True).stdout
+        if exe not in cmd:  # gone, or the pid was reused by something unrelated
+            continue
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(pid, sig)
+            except ProcessLookupError:
+                break
+            time.sleep(0.5 if sig == signal.SIGTERM else 0)
+    f.unlink()
+    run.log("orphans_reaped")
+
+
 class Ctx:
     def __init__(self, task, cfg, agents, run, wt, should_stop, economy_model, quota, tier, notify=None):
         self.task, self.cfg, self.agents, self.run, self.wt = task, cfg, agents, run, wt
@@ -31,6 +74,11 @@ class Ctx:
         self.history, self.attempts, self.gate_text, self.issues = [], {"worker": 0, "premium": 0}, "", []
         self.next = "premium" if tier == "premium" else "worker"
         self.last_stage, self.error, self.resume_after, self.quota_reason = None, "", None, ""
+
+    def track(self, pid, argv):
+        f = self.run.path / "children.json"
+        kids = json.loads(f.read_text()) if f.exists() else []
+        f.write_text(json.dumps(kids + [[pid, os.path.basename(argv[0])]]))
 
     def save(self):
         self.run.update(history=self.history, attempts=self.attempts, next=self.next, last_stage=self.last_stage,
@@ -67,7 +115,7 @@ def _run_stage(ctx, stage, agent_name, model, call):
     elif not ctx.wt.diff().strip():
         outcome = "no changes made"  # an agent that edited nothing has not done the task, whatever the gate says
     else:
-        gate_res = gatemod.run(ctx.task.gate, ctx.wt.path, ctx.env, ctx.cfg.limits.gate_timeout_s)
+        gate_res = gatemod.run(ctx.task.gate, ctx.wt.path, ctx.env, ctx.cfg.limits.gate_timeout_s, on_start=ctx.track)
         ctx.gate_text = gate_res.summary()
         outcome = "gate passed" if gate_res.ok else "gate failed"
     ctx.history.append({"stage": stage, "agent": agent_name, "model": model, "duration_s": r.duration_s,
@@ -93,7 +141,7 @@ def _step_worker(ctx):
     _handoff(ctx, "Do the task. If an earlier attempt failed, fix exactly what the gate output / issues say; keep the diff small.")
     res = _run_stage(ctx, "worker", "opencode", ctx.economy_model, lambda: ctx.agents.opencode.run(
         WORKER_PROMPT, ctx.wt.path, model=ctx.economy_model, timeout=ctx.cfg.limits.worker_timeout_s,
-        should_stop=ctx.should_stop))
+        should_stop=ctx.should_stop, on_start=ctx.track))
     if res == "stopped":
         return "stopped"
     if res == "gate_ok":
@@ -112,7 +160,7 @@ def _step_premium(ctx):
     model = ctx.cfg.premium.model
     res = _run_stage(ctx, "premium", "claude", model, lambda: ctx.agents.claude.run(
         PREMIUM_PROMPT, ctx.wt.path, model=model, mode="full", timeout=ctx.cfg.limits.claude_timeout_s,
-        should_stop=ctx.should_stop))
+        should_stop=ctx.should_stop, on_start=ctx.track))
     if res == "stopped":
         return "stopped"
     if res == "gate_ok":
@@ -129,7 +177,8 @@ def _step_eval(ctx):
     cfg = ctx.cfg
     ctx.run.log("stage_start", stage="eval", model=cfg.evaluator.model)
     v = evaluator.evaluate(ctx.agents.claude, ctx.task, ctx.wt.path, ctx.wt.diff(), ctx.gate_text,
-                           model=cfg.evaluator.model, timeout=cfg.limits.claude_timeout_s, should_stop=ctx.should_stop)
+                           model=cfg.evaluator.model, timeout=cfg.limits.claude_timeout_s, should_stop=ctx.should_stop,
+                           on_start=ctx.track)
     ctx.quota.update(v.rate_limit)
     if v.malformed:
         v.call_failed, v.error = True, "returned a malformed verdict twice"  # evaluator problem, not a code failure
@@ -205,6 +254,7 @@ def _finish(ctx, status):
     parked = status == "waiting_quota"
     extra = {"resume_after": ctx.resume_after, "quota_reason": ctx.quota_reason} if parked else {}
     ctx.save()
+    (ctx.run.path / "children.json").unlink(missing_ok=True)  # nothing of ours is running any more
     ctx.run.update(status=status, stage=status if parked else "finished", **extra)
     ctx.run.log("run_parked" if parked else "run_finished", status=status)
     report.write(ctx.run)
@@ -222,7 +272,8 @@ def run_task(task, cfg, agents, repo=None, should_stop=None, run_id=None, is_pub
         "status": "running", "stage": "intake", "task": asdict(task), "repo": str(repo),
         "attempts": {"worker": 0, "premium": 0}, "history": []})
     try:
-        return _start(run, task, cfg, agents, repo, should_stop, is_public, quota, wait, sleep, now, notify)
+        with driver_lock(run):
+            return _start(run, task, cfg, agents, repo, should_stop, is_public, quota, wait, sleep, now, notify)
     except Exception as e:  # setup-time crash (classifier, worktree, ...): visible, and isolated from other tasks
         run.update(status="failed", error=f"{type(e).__name__}: {e}")
         run.log("run_error", error=run.state["error"])
@@ -287,6 +338,8 @@ def resume_task(run, cfg, agents, should_stop=None, quota=None, wait=False, slee
     ctx.history, ctx.attempts = s["history"], s["attempts"]
     ctx.gate_text, ctx.issues, ctx.error = s.get("gate_text", ""), s.get("issues", []), ""
     ctx.next, ctx.last_stage = s["next"], s.get("last_stage")
-    run.update(status="running")
-    run.log("run_resumed", next=ctx.next)
-    return _drive(ctx, wait, sleep, now)
+    with driver_lock(run):  # raises RunBusy (a ValueError) if another process is driving this run
+        reap_orphans(run)
+        run.update(status="running")
+        run.log("run_resumed", next=ctx.next)
+        return _drive(ctx, wait, sleep, now)

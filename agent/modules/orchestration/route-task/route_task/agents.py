@@ -44,11 +44,13 @@ def _kill_group(p):
             continue
 
 
-def run_process(argv, cwd, env, timeout, should_stop=None):
+def run_process(argv, cwd, env, timeout, should_stop=None, on_start=None):
     """Run in its own process group; kill the whole group on timeout or stop. Returns (rc, out, err, timed_out, stopped, secs)."""
     t0 = time.time()
     p = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE, text=True, start_new_session=True)
+    if on_start:
+        on_start(p.pid, argv)  # lets the caller record the child so a resumed run can reap it if we get SIGKILLed
     timed_out = stopped = False
     while True:
         try:
@@ -76,13 +78,13 @@ class OpenCodeAgent:
     def __init__(self, env, exe="opencode"):
         self.env, self.exe = env, exe
 
-    def run(self, prompt, cwd, model, session=None, timeout=1800, should_stop=None):
+    def run(self, prompt, cwd, model, session=None, timeout=1800, should_stop=None, on_start=None):
         argv = [self.exe, "run", "-m", model, "--dir", str(cwd), "--format", "json", "--auto"]
         if session:
             argv += ["-s", session]
         argv.append(prompt)
         env = {**self.env, "OPENCODE_PERMISSION": guard.opencode_permission()}
-        rc, out, err, timed_out, stopped, secs = run_process(argv, cwd, env, timeout, should_stop)
+        rc, out, err, timed_out, stopped, secs = run_process(argv, cwd, env, timeout, should_stop, on_start)
         r = StageResult(returncode=rc, duration_s=secs, timed_out=timed_out, stopped=stopped)
         texts, errors = [], []
         for o in _events(out):
@@ -110,7 +112,7 @@ class ClaudeAgent:
     def __init__(self, env, exe="claude"):
         self.env, self.exe = env, exe
 
-    def run(self, prompt, cwd, model, mode="full", schema=None, session=None, timeout=1800, should_stop=None):
+    def run(self, prompt, cwd, model, mode="full", schema=None, session=None, timeout=1800, should_stop=None, on_start=None):
         # Never --bare: it ignores the subscription login. Prompt right after -p; list flags take one comma-joined value.
         argv = [self.exe, "-p", prompt, "--model", model, "--output-format", "stream-json", "--verbose"]
         if mode == "full":
@@ -121,7 +123,7 @@ class ClaudeAgent:
             argv += ["--json-schema", json.dumps(schema)]
         if session:
             argv += ["--resume", session]
-        rc, out, err, timed_out, stopped, secs = run_process(argv, cwd, self.env, timeout, should_stop)
+        rc, out, err, timed_out, stopped, secs = run_process(argv, cwd, self.env, timeout, should_stop, on_start)
         r = StageResult(returncode=rc, duration_s=secs, timed_out=timed_out, stopped=stopped)
         result = None
         for o in _events(out):

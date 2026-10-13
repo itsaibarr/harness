@@ -195,6 +195,29 @@ class CliRecoveryTest(CliStubBase):
         time.sleep(0.5)
         self.assertNotEqual(subprocess.run(["pgrep", "-f", str(STUBS / "opencode")], capture_output=True).returncode, 0)  # child killed
 
+    def test_resume_refuses_a_run_another_process_is_still_driving(self):
+        p = subprocess.Popen([sys.executable, "-m", "route_task", "run", str(self.task), "--config", str(self.cfg), "--no-wait"],
+                             env={**self.env, "STUB_OC": "hang"}, cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            run_dir = self.wait_for('"stage": "worker"')
+            r = self.cli("resume", run_dir.name, "--config", str(self.cfg), STUB_OC="ok")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("another process", r.stderr)
+            self.assertEqual(json.loads((run_dir / "state.json").read_text())["status"], "running")
+        finally:
+            self.cli("stop", "--config", str(self.cfg))
+            p.communicate(timeout=30)
+
+    def test_resume_after_sigkill_reaps_the_orphaned_agent_before_restarting(self):
+        run_dir = self.kill_during('"stage": "worker"', STUB_OC="hang")
+        time.sleep(0.3)
+        self.assertEqual(subprocess.run(["pgrep", "-f", str(STUBS / "opencode")], capture_output=True).returncode, 0)  # orphan alive
+        r = self.cli("resume", run_dir.name, "--config", str(self.cfg), STUB_OC="ok")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        time.sleep(0.3)
+        self.assertNotEqual(subprocess.run(["pgrep", "-f", str(STUBS / "opencode")], capture_output=True).returncode, 0)  # reaped
+        self.assertFalse((run_dir / "children.json").exists())
+
     def test_kill_during_first_worker_step_is_resumable(self):
         run_dir = self.kill_during('"stage": "worker"', STUB_OC="hang")
         r = self.cli("resume", run_dir.name, "--config", str(self.cfg), STUB_OC="ok")

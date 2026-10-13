@@ -28,10 +28,10 @@ class GateResult:
         return "\n".join(lines)
 
 
-def run(commands, cwd, env, timeout, tail_lines=60):
+def run(commands, cwd, env, timeout, tail_lines=60, on_start=None):
     result = GateResult(ok=True)
     for cmd in commands:
-        rc, out, err, timed_out, _, secs = run_process(["bash", "-c", cmd], cwd, env, timeout)
+        rc, out, err, timed_out, _, secs = run_process(["bash", "-c", cmd], cwd, env, timeout, on_start=on_start)
         tail = "\n".join((out + err).splitlines()[-tail_lines:])
         ok = rc == 0 and not timed_out
         result.checks.append(Check(cmd, ok, rc, tail, timed_out, secs))
