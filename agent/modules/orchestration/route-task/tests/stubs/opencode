@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+"""Fake `opencode run --format json`. Behaviour via STUB_OC: ok | fail | hang | error_event. Logs argv/env/cwd to STUB_LOG."""
+import json, os, sys, time
+
+log = os.environ.get("STUB_LOG")
+if log:
+    with open(log, "a") as f:
+        f.write(json.dumps({"tool": "opencode", "argv": sys.argv[1:], "env": dict(os.environ), "cwd": os.getcwd()}) + "\n")
+
+mode = os.environ.get("STUB_OC", "ok")
+time.sleep(float(os.environ.get("STUB_OC_SLEEP", "0")))
+sid = "ses_stub1"
+if os.environ.get("STUB_WRITE"):
+    open(os.path.join(os.getcwd(), os.environ["STUB_WRITE"]), "w").write("worker output\n")
+
+def emit(t, part):
+    print(json.dumps({"type": t, "timestamp": 1, "sessionID": sid, "part": part}), flush=True)
+
+if mode == "hang":
+    time.sleep(120)  # print nothing: a parent SIGKILLed mid-test would turn a later print into EPIPE and kill us
+elif mode == "fail":
+    print("boom: provider unavailable", file=sys.stderr)
+    sys.exit(1)
+else:
+    emit("step_start", {"type": "step-start"})
+    emit("text", {"type": "text", "text": os.environ.get("STUB_TEXT", "done")})
+    if mode == "error_event":
+        emit("error", {"type": "error", "message": "rate limited"})
+    emit("step_finish", {"type": "step-finish", "reason": "stop", "cost": 0,
+                         "tokens": {"total": 110, "input": 100, "output": 10, "reasoning": 0, "cache": {"write": 0, "read": 0}}})

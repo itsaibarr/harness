@@ -2,3 +2,7 @@
 node_modules/
 .context/
 *.log
+
+# route-task local config (keep out of the public repo)
+agent/modules/orchestration/route-task/route-task.toml
+__pycache__/

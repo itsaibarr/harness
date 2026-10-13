@@ -16,6 +16,7 @@ Gives the project: orientation CLAUDE.md (150-line cap), permissions starter, do
 - `agent/modules/web-development/` — sight loop (verify-ui.mjs + odiff), scoped MCP template, perf recipes
 - `agent/modules/automation/` — Mailpit verify-before-send gate, dead-man monitor, secrets hardening
 - `agent/modules/research/` — evidence templates, Graphify break-glass, MemPalace search recipes
+- `agent/modules/orchestration/` — route-task: tiered OpenCode → Sonnet → Opus CLI orchestrator (`install.sh` wires the launcher, `/route` command and skill; router row 11)
 - `agent/modules/pi-stack/` — pi+cmux stack (permissions extension, install/first-launch checklist)
 - `docs/agent-harness/` — the full record: baseline audit, operating principles, evaluations (3 rounds), plans, validation report, framework comparison (+PDF), transition plan, decision log
 
