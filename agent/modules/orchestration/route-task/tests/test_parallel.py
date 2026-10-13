@@ -81,6 +81,25 @@ class QuotaThreadSafetyTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
 
+class QuotaUpdateNotBlockedTest(unittest.TestCase):
+    def test_update_does_not_wait_for_an_in_flight_probe(self):
+        release = threading.Event()
+
+        def slow_probe():
+            release.wait(5)
+            return rl(0.1, 0.1)
+
+        g = quota.QuotaGate(config.load(None), slow_probe)
+        t = threading.Thread(target=lambda: g.check("evaluator"))
+        t.start()
+        time.sleep(0.2)  # the check now holds the gate lock inside the probe
+        t0 = time.time()
+        g.update(rl(0.3, 0.3))
+        self.assertLess(time.time() - t0, 0.5)
+        release.set()
+        t.join()
+
+
 class BatchTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -124,6 +143,47 @@ class BatchTest(unittest.TestCase):
         oc = Tracker(delay=0.05, writes={"out.txt": "good\n"})
         runs = batch.run_batch(ts, self.cfg, Agents(oc, ScriptedAgent()), jobs=3, repo=self.repo)
         self.assertEqual([r.state["task"]["title"] for r in runs], ["task 0", "task 1", "task 2"])
+
+    def _quota_batch(self, probe, n=2, **kw):
+        from tests.test_quota import Clock
+        self.cfg.quota.enabled = True
+        self.cfg.evaluator.enabled = True
+        clock = Clock()
+        g = quota.QuotaGate(self.cfg, probe, now=clock)
+        slept = []
+
+        def sleep(s):
+            slept.append(s)
+            clock.t += s
+
+        oc = Tracker(delay=0.01, writes={"out.txt": "good\n"})
+        pass_ = {"structured": {"pass": True, "issues": [], "needs_premium": False, "reason": "ok"}}
+        runs = batch.run_batch(self.tasks(n), self.cfg, Agents(oc, ScriptedAgent(*[pass_] * n)), jobs=1, repo=self.repo,
+                               quota=g, wait=True, sleep=sleep, now=clock, **kw)
+        return runs, slept, probe
+
+    def test_parked_tasks_are_resumed_together_after_one_wait_instead_of_each_sleeping_in_a_slot(self):
+        from tests.test_quota import T0
+        probe = Probe(rl(0.90, 0.10, h_reset=T0 + 3600), rl(0.10, 0.10))
+        runs, slept, _ = self._quota_batch(probe)
+        self.assertEqual([r.state["status"] for r in runs], ["done", "done"])
+        self.assertGreaterEqual(sum(slept), 3600 - 1)
+        self.assertEqual(probe.calls, 2)  # one probe before parking, one fresh probe after waking
+
+    def test_waiting_never_hot_loops_even_if_the_reset_time_is_already_past(self):
+        from tests.test_quota import T0
+        probe = Probe(*[rl(0.90, 0.10, h_reset=T0 - 100)] * 20)
+        n = {"i": 0}
+
+        def stop():
+            n["i"] += 1
+            return n["i"] > 40
+
+        runs, slept, _ = self._quota_batch(probe, should_stop=stop)
+        self.assertEqual({r.state["status"] for r in runs}, {"waiting_quota"})
+        # at least MIN_CYCLE_S (60s) of waiting between consecutive probes, whatever the reset time says
+        self.assertGreaterEqual(sum(slept), 60 * (probe.calls - 1) - 1)
+        self.assertGreaterEqual(probe.calls, 2)
 
     def test_setup_time_crash_is_isolated_per_task(self):
         class Dead:

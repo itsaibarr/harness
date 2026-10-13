@@ -6,7 +6,7 @@ import signal
 import subprocess
 import time
 from collections import namedtuple
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from . import guard
 
@@ -25,10 +25,8 @@ class StageResult:
     error: str = ""
     timed_out: bool = False
     stopped: bool = False
-    returncode: int | None = None
     structured: dict | None = None
     rate_limit: dict | None = None  # {"five_hour": {utilization, resetsAt}, "seven_day": {...}}
-    denials: list = field(default_factory=list)
 
 
 def _kill_group(p):
@@ -85,7 +83,7 @@ class OpenCodeAgent:
         argv.append(prompt)
         env = {**self.env, "OPENCODE_PERMISSION": guard.opencode_permission()}
         rc, out, err, timed_out, stopped, secs = run_process(argv, cwd, env, timeout, should_stop, on_start)
-        r = StageResult(returncode=rc, duration_s=secs, timed_out=timed_out, stopped=stopped)
+        r = StageResult(duration_s=secs, timed_out=timed_out, stopped=stopped)
         texts, errors = [], []
         for o in _events(out):
             r.session_id = r.session_id or o.get("sessionID")
@@ -124,7 +122,7 @@ class ClaudeAgent:
         if session:
             argv += ["--resume", session]
         rc, out, err, timed_out, stopped, secs = run_process(argv, cwd, self.env, timeout, should_stop, on_start)
-        r = StageResult(returncode=rc, duration_s=secs, timed_out=timed_out, stopped=stopped)
+        r = StageResult(duration_s=secs, timed_out=timed_out, stopped=stopped)
         result = None
         for o in _events(out):
             if o.get("type") == "rate_limit_event":
@@ -135,7 +133,6 @@ class ClaudeAgent:
             r.session_id = result.get("session_id")
             r.cost_usd = result.get("total_cost_usd")
             r.structured = result.get("structured_output")
-            r.denials = result.get("permission_denials") or []
             r.text = result.get("result") or ""
             if result.get("is_error") or result.get("subtype") != "success":
                 r.error = r.text or result.get("subtype", "error")

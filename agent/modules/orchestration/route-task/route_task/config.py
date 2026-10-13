@@ -3,6 +3,8 @@ import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
+from .routing import TIERS
+
 DEFAULTS = {
     "state_dir": "~/.route-task",
     "economy": {
@@ -44,6 +46,14 @@ class ConfigError(ValueError):
     pass
 
 
+def _same_kind(base, v):
+    if isinstance(base, bool):
+        return isinstance(v, bool)
+    if isinstance(base, (int, float)):
+        return isinstance(v, (int, float)) and not isinstance(v, bool)  # TOML `1` is fine where 0.75 is expected
+    return isinstance(v, type(base))
+
+
 def _merge(base, over, path=""):
     out = dict(base)
     for k, v in over.items():
@@ -54,6 +64,8 @@ def _merge(base, over, path=""):
                 raise ConfigError(f"{path}{k} must be a table")
             out[k] = _merge(base[k], v, f"{path}{k}.")
         else:
+            if not _same_kind(base[k], v):
+                raise ConfigError(f"{path}{k}: expected {type(base[k]).__name__}, got {type(v).__name__}")
             out[k] = v
     return out
 
@@ -64,7 +76,7 @@ def _ns(d):
 
 def _check_routes(routes):
     for r in routes:
-        if (not isinstance(r, dict) or set(r) != {"keywords", "tier"} or r["tier"] not in ("economy", "premium")
+        if (not isinstance(r, dict) or set(r) != {"keywords", "tier"} or r["tier"] not in TIERS
                 or not r["keywords"] or not all(isinstance(k, str) for k in r["keywords"])):
             raise ConfigError(f"bad [[routes]] entry (need keywords=[...] and tier=economy|premium): {r!r}")
 
@@ -74,7 +86,7 @@ def load(path):
     if path:
         with open(path, "rb") as f:
             data = _merge(DEFAULTS, tomllib.load(f))
-        _check_routes(data["routes"])
+    _check_routes(data["routes"])
     c = _ns(data)
     c.state_dir = Path(c.state_dir).expanduser()
     return c

@@ -30,9 +30,9 @@ class QuotaGate:
         self._lock = threading.RLock()
 
     def update(self, rate_limit):
-        with self._lock:
-            if rate_limit and _parse(rate_limit):
-                self.last, self.at = rate_limit, self.now()
+        # deliberately lock-free: check() holds the lock across a slow probe and a finished call must not wait for it
+        if rate_limit and _parse(rate_limit):
+            self.last, self.at = rate_limit, self.now()
 
     def invalidate(self):
         """Forget the cached reading (e.g. after sleeping through a window) so the next check re-probes."""

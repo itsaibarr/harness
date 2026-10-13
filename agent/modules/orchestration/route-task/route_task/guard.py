@@ -3,6 +3,7 @@
 Enforcement = the scrubbed env (git/gh cannot authenticate, whatever the invocation form: spike S1/S2 showed
 `bash -c` and python subprocess bypass Bash deny rules). The deny lists below are only an advisory first layer.
 """
+import functools
 import json
 import os
 import subprocess
@@ -54,6 +55,7 @@ class PrivacyRefused(RuntimeError):
     pass
 
 
+@functools.cache  # one `gh` network call per repo per process, not per task
 def repo_is_public(repo):
     """True only if `gh` says the repo is public and not a fork. Fails closed (False) on any error."""
     try:

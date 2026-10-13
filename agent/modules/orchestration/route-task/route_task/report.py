@@ -1,4 +1,10 @@
 """report.md: what was completed, which agents ran, what was verified, what is unresolved, whether premium was used."""
+from datetime import datetime
+
+
+def resume_note(ts, reason=""):
+    when = f"{datetime.fromtimestamp(ts):%a %H:%M}" if ts else "unknown"
+    return f"resume after {when}" + (f": {reason}" if reason else "")
 
 
 def render(state):
@@ -28,7 +34,7 @@ def render(state):
         if state.get("error"):
             lines.append(f"- {state['error']}")
     elif status == "waiting_quota":
-        lines.append(f"- Parked until the Claude quota window resets (resume after {state.get('resume_after')}).")
+        lines.append(f"- Parked until the Claude quota window allows it ({resume_note(state.get('resume_after'), state.get('quota_reason', ''))}).")
     elif status == "stopped":
         lines.append("- Stopped by the kill switch before completion.")
     else:

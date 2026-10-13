@@ -61,7 +61,7 @@ def create(repo, run_id, wt_root):
     return Worktree(path, branch, base)
 
 
-def open_(repo, run_id, wt_root, base_sha):
+def open_(run_id, wt_root, base_sha):
     path = Path(wt_root) / run_id
     if not path.is_dir():
         raise WorktreeError(f"worktree missing: {path}")

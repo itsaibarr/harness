@@ -126,8 +126,9 @@ class CliQuotaTest(CliStubBase):
         r2 = self.cli("resume", run_id, "--config", str(self.cfg), "--no-wait", STUB_5H="0.10")
         self.assertEqual(r2.returncode, 0, r2.stdout + r2.stderr)
         self.assertIn("done", r2.stdout)
-        events = (self.state / "runs" / run_id / "events.jsonl").read_text()
-        self.assertEqual(events.count('"stage": "worker", "attempt"'), 2)  # start + end of ONE worker attempt
+        events = [json.loads(l) for l in (self.state / "runs" / run_id / "events.jsonl").read_text().splitlines()]
+        worker_events = [e["type"] for e in events if e.get("stage") == "worker"]
+        self.assertEqual(worker_events, ["stage_start", "stage_end"])  # ONE worker attempt, not redone on resume
 
     def test_resume_of_a_finished_run_is_an_error(self):
         self.cli("run", str(self.task), "--config", str(self.cfg), "--no-wait", STUB_5H="0.10")
@@ -178,9 +179,9 @@ class CliRecoveryTest(CliStubBase):
         self.assertEqual(json.loads((run_dir / "state.json").read_text())["status"], "running")
         r = self.cli("resume", run_dir.name, "--config", str(self.cfg), STUB_CL="ok")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        events = (run_dir / "events.jsonl").read_text()
-        self.assertEqual(events.count('"type": "stage_start", "stage": "worker"'), 1)
-        self.assertIn("run_resumed", events)
+        events = [json.loads(l) for l in (run_dir / "events.jsonl").read_text().splitlines()]
+        self.assertEqual([e["type"] for e in events if e.get("stage") == "worker"], ["stage_start", "stage_end"])
+        self.assertIn("run_resumed", [e["type"] for e in events])
         self.assertEqual(json.loads((run_dir / "state.json").read_text())["status"], "done")
 
     def test_stop_kills_the_inflight_child_and_marks_the_run_stopped(self):

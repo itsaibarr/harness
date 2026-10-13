@@ -45,7 +45,7 @@ Without `gate:` a run is "done" but reported as not machine-verified.
 
 ## Quota policy (usage-left based, no call counts)
 
-Before every Claude call it reads your live 5-hour / 7-day utilization from Claude's own `rate_limit_event` (a one-token Haiku probe if none is cached). Defaults, all in config: Sonnet evaluator allowed while 5h < 0.75 and 7d < 0.90; Opus premium while 5h < 0.60 and 7d < 0.80; plus weekly pacing (refuse when 7d utilization > fraction of the week elapsed + 0.15) so unattended runs cannot front-load the week and interactive T3 Code use keeps headroom. A blocked run parks as `waiting_quota` with a resume time; `run --wait` (default for batches) sleeps through it. No reading = fail closed. Utilization is an observed fraction; nothing is converted into tokens or dollars.
+Before every Claude call it reads your live 5-hour / 7-day utilization from Claude's own `rate_limit_event` (a one-token Haiku probe if none is cached). Defaults, all in config: Sonnet evaluator allowed while 5h < 0.75 and 7d < 0.90; Opus premium while 5h < 0.60 and 7d < 0.80; plus weekly pacing (refuse when 7d utilization > fraction of the week elapsed + 0.15) so unattended runs cannot front-load the week and interactive T3 Code use keeps headroom. A blocked run parks as `waiting_quota` with a resume time. In a batch (`run --wait`, the default for several tasks) a parked task frees its slot immediately, other tasks keep going, and the batch sleeps once until the earliest reset (at least 60 s between probes) and resumes all parked runs together. `route-task stop` leaves parked runs parked. No reading = fail closed. Utilization is an observed fraction; nothing is converted into tokens or dollars.
 
 ## Privacy
 
@@ -56,6 +56,8 @@ Before every Claude call it reads your live 5-hour / 7-day utilization from Clau
 - **Enforced:** children run with a scrubbed environment: no `ANTHROPIC_API_KEY` (it would silently override your subscription), `GH_TOKEN`, `GITHUB_TOKEN`, `SSH_AUTH_SOCK`; git has no credential helper/askpass/ssh; `gh` has an empty config dir. A `git push` or `gh` call fails to authenticate whatever form the agent uses (verified through a nested `bash -c`, see `SPIKES.md`).
 - **Advisory only:** Bash deny rules for push/remote/gh/vercel/railway/publish/sudo. Spikes S1/S2 showed `bash -c` and python `subprocess` bypass them in both CLIs.
 - **Not provided:** an OS sandbox. "Full access" means no permission prompts inside the worktree. An agent can still read or write outside it, and other CLIs whose tokens live in files under `$HOME` are not blocked. Review the branch and `report.md` before merging anything; run unattended only on tasks you would hand to a junior with your laptop.
+- One driver per run (file lock): `resume` refuses a run another process is driving, and after a crash it kills agent/gate processes the dead driver left behind before restarting the stage.
+- An agent that changes nothing is a failed attempt even if the gate passes; a malformed evaluator verdict is an evaluator problem (needs a human), not a code failure.
 - Caps: 2 worker attempts, 1 premium per task, per-stage timeouts, kill switch checked between and during stages. Premium is only reached through the gate/evaluator, never for infrastructure failures.
 
 ## Notes and limits

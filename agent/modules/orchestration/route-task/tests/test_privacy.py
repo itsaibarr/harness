@@ -51,6 +51,18 @@ class EconomyModelTest(unittest.TestCase):
             self.assertFalse(guard.repo_is_public(Path(d)))
 
 
+class PublicCheckCacheTest(unittest.TestCase):
+    def test_one_gh_call_per_repo_not_per_task(self):
+        from unittest import mock
+        guard.repo_is_public.cache_clear()
+        fake = mock.Mock(returncode=0, stdout="true\n")
+        with tempfile.TemporaryDirectory() as d, mock.patch("route_task.guard.subprocess.run", return_value=fake) as m:
+            self.assertTrue(guard.repo_is_public(Path(d)))
+            self.assertTrue(guard.repo_is_public(Path(d)))
+        self.assertEqual(m.call_count, 1)
+        guard.repo_is_public.cache_clear()
+
+
 class RunPrivacyTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

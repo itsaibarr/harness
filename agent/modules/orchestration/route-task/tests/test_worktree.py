@@ -59,7 +59,7 @@ class WorktreeTest(unittest.TestCase):
 
     def test_open_existing_worktree_by_run_id(self):
         wt = worktree.create(self.repo, "run1", self.wt_root)
-        again = worktree.open_(self.repo, "run1", self.wt_root, wt.base_sha)
+        again = worktree.open_("run1", self.wt_root, wt.base_sha)
         self.assertEqual(again.path, wt.path)
 
     def test_non_git_dir_is_error(self):

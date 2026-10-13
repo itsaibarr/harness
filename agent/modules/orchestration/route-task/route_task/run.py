@@ -9,7 +9,6 @@ import signal
 import subprocess
 import time
 from contextlib import contextmanager
-from datetime import datetime
 from dataclasses import asdict
 from pathlib import Path
 
@@ -80,6 +79,9 @@ class Ctx:
         kids = json.loads(f.read_text()) if f.exists() else []
         f.write_text(json.dumps(kids + [[pid, os.path.basename(argv[0])]]))
 
+    def untrack(self):  # the stage's processes have exited: keep children.json to live children only
+        (self.run.path / "children.json").unlink(missing_ok=True)
+
     def save(self):
         self.run.update(history=self.history, attempts=self.attempts, next=self.next, last_stage=self.last_stage,
                         gate_text=self.gate_text, issues=self.issues, error=self.error, quota=self.quota.last)
@@ -97,12 +99,19 @@ def _handoff(ctx, next_step):
         ctx.task, ctx.history, ctx.wt.diff_stat(), ctx.gate_text, ctx.issues, ctx.wt.files(), next_step))
 
 
+def _record(ctx, stage, agent, model, duration, outcome, gate="", **log):
+    ctx.history.append({"stage": stage, "agent": agent, "model": model, "duration_s": duration,
+                        "outcome": outcome, "gate": gate})
+    ctx.run.log("stage_end", stage=stage, outcome=outcome, **log)
+
+
 def _run_stage(ctx, stage, agent_name, model, call):
     """One agent call + checkpoint + gate. Returns 'gate_ok' | 'fail' | 'stopped'."""
     ctx.attempts[stage] += 1
     n = ctx.attempts[stage]
     ctx.run.log("stage_start", stage=stage, attempt=n, agent=agent_name, model=model)
     r = call()
+    ctx.untrack()
     ctx.wt.checkpoint(f"route-task: {stage} attempt {n}")
     ctx.quota.update(r.rate_limit)
     ctx.last_stage = stage
@@ -116,11 +125,10 @@ def _run_stage(ctx, stage, agent_name, model, call):
         outcome = "no changes made"  # an agent that edited nothing has not done the task, whatever the gate says
     else:
         gate_res = gatemod.run(ctx.task.gate, ctx.wt.path, ctx.env, ctx.cfg.limits.gate_timeout_s, on_start=ctx.track)
+        ctx.untrack()
         ctx.gate_text = gate_res.summary()
         outcome = "gate passed" if gate_res.ok else "gate failed"
-    ctx.history.append({"stage": stage, "agent": agent_name, "model": model, "duration_s": r.duration_s,
-                        "outcome": outcome, "gate": gate_res.summary() if gate_res else "", "session_id": r.session_id})
-    ctx.run.log("stage_end", stage=stage, attempt=n, outcome=outcome)
+    _record(ctx, stage, agent_name, model, r.duration_s, outcome, gate_res.summary() if gate_res else "", attempt=n)
     return "stopped" if r.stopped else ("gate_ok" if outcome == "gate passed" else "fail")
 
 
@@ -179,6 +187,7 @@ def _step_eval(ctx):
     v = evaluator.evaluate(ctx.agents.claude, ctx.task, ctx.wt.path, ctx.wt.diff(), ctx.gate_text,
                            model=cfg.evaluator.model, timeout=cfg.limits.claude_timeout_s, should_stop=ctx.should_stop,
                            on_start=ctx.track)
+    ctx.untrack()
     ctx.quota.update(v.rate_limit)
     if v.malformed:
         v.call_failed, v.error = True, "returned a malformed verdict twice"  # evaluator problem, not a code failure
@@ -190,9 +199,7 @@ def _step_eval(ctx):
     else:
         ctx.issues = v.issues
         outcome = f"eval failed: {v.reason}"
-    ctx.history.append({"stage": "eval", "agent": "claude", "model": cfg.evaluator.model, "duration_s": v.duration_s,
-                        "outcome": outcome, "gate": "", "session_id": None})
-    ctx.run.log("stage_end", stage="eval", outcome=outcome)
+    _record(ctx, "eval", "claude", cfg.evaluator.model, v.duration_s, outcome)
     if v.call_failed:
         if ctx.should_stop():
             return "stopped"
@@ -250,15 +257,23 @@ def _notify(notify, title, status, detail=""):
             pass  # a broken notifier must never break a run
 
 
+def _fail(run, task, notify, error):
+    run.update(status="failed", error=error)
+    run.log("run_finished", status="failed")
+    report.write(run)
+    _notify(notify, task.title, "failed", f": {error}")
+    return run
+
+
 def _finish(ctx, status):
     parked = status == "waiting_quota"
     extra = {"resume_after": ctx.resume_after, "quota_reason": ctx.quota_reason} if parked else {}
     ctx.save()
-    (ctx.run.path / "children.json").unlink(missing_ok=True)  # nothing of ours is running any more
+    ctx.untrack()
     ctx.run.update(status=status, stage=status if parked else "finished", **extra)
     ctx.run.log("run_parked" if parked else "run_finished", status=status)
     report.write(ctx.run)
-    detail = f" (resume after {datetime.fromtimestamp(ctx.resume_after):%a %H:%M}: {ctx.quota_reason})" if parked and ctx.resume_after else ""
+    detail = f" ({report.resume_note(ctx.resume_after, ctx.quota_reason)})" if parked else ""
     _notify(ctx.notify, ctx.task.title, status, detail)
     return ctx.run
 
@@ -275,17 +290,13 @@ def run_task(task, cfg, agents, repo=None, should_stop=None, run_id=None, is_pub
         with driver_lock(run):
             return _start(run, task, cfg, agents, repo, should_stop, is_public, quota, wait, sleep, now, notify)
     except Exception as e:  # setup-time crash (classifier, worktree, ...): visible, and isolated from other tasks
-        run.update(status="failed", error=f"{type(e).__name__}: {e}")
-        run.log("run_error", error=run.state["error"])
-        run.log("run_finished", status="failed")
-        report.write(run)
-        _notify(notify, task.title, "failed", f": {run.state['error']}")
-        return run
+        error = f"{type(e).__name__}: {e}"
+        run.log("run_error", error=error)
+        return _fail(run, task, notify, error)
 
 
 def _start(run, task, cfg, agents, repo, should_stop, is_public, quota, wait, sleep, now, notify):
     run_id = run.path.name
-    should_stop = should_stop or (lambda: False)
     tier, why = routing.static(task, cfg)
     economy_model = cfg.economy.model
     if tier != "premium":
@@ -294,12 +305,8 @@ def _start(run, task, cfg, agents, repo, should_stop, is_public, quota, wait, sl
             if cfg.economy.trains_on_data:
                 run.log("privacy_guard", decision="allowed", model=economy_model, privacy=task.privacy)
         except guard.PrivacyRefused as e:
-            run.update(status="failed", error=f"privacy guard: {e}")
             run.log("privacy_guard", decision="refused", model=cfg.economy.model, privacy=task.privacy, reason=str(e))
-            run.log("run_finished", status="failed")
-            report.write(run)
-            _notify(notify, task.title, "failed", f": {run.state['error']}")
-            return run
+            return _fail(run, task, notify, f"privacy guard: {e}")
     if tier is None:
         tier = "economy"
         if cfg.routing.classifier:
@@ -313,11 +320,7 @@ def _start(run, task, cfg, agents, repo, should_stop, is_public, quota, wait, sl
     try:
         wt = worktree.create(repo, run_id, cfg.state_dir / "worktrees")
     except worktree.WorktreeError as e:
-        run.update(status="failed", error=str(e))
-        run.log("run_finished", status="failed")
-        report.write(run)
-        _notify(notify, task.title, "failed", f": {e}")
-        return run
+        return _fail(run, task, notify, str(e))
     run.update(worktree=str(wt.path), branch=wt.branch, base_sha=wt.base_sha, economy_model=economy_model)
     ctx = Ctx(task, cfg, agents, run, wt, should_stop, economy_model, quota or default_quota(cfg, agents), tier, notify)
     ctx.save()  # persist `next` before the first stage so even a crash during it is resumable
@@ -330,7 +333,7 @@ def resume_task(run, cfg, agents, should_stop=None, quota=None, wait=False, slee
     if s["status"] in ("done", "needs_human") or (s["status"] == "failed" and "next" not in s):
         raise ValueError(f"run {s['run_id']} is {s['status']}; nothing to resume")
     try:
-        wt = worktree.open_(s["repo"], s["run_id"], cfg.state_dir / "worktrees", s["base_sha"])
+        wt = worktree.open_(s["run_id"], cfg.state_dir / "worktrees", s["base_sha"])
     except worktree.WorktreeError as e:
         raise ValueError(f"cannot resume {s['run_id']}: {e}") from e
     ctx = Ctx(Task(**s["task"]), cfg, agents, run, wt, should_stop or (lambda: False), s["economy_model"],

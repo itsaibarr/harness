@@ -34,6 +34,20 @@ class ConfigTest(unittest.TestCase):
             with self.assertRaises(config.ConfigError):
                 config.load(p)
 
+    def test_wrong_value_type_is_an_error_not_a_late_crash(self):
+        for bad in ('[limits]\nworker_attempts = "2"\n', "[quota]\npacing = 1\n", "[economy]\nmodel = 5\n", "[env]\nextra = \"X\"\n"):
+            with tempfile.TemporaryDirectory() as d:
+                p = Path(d, "c.toml")
+                p.write_text(bad)
+                with self.assertRaises(config.ConfigError, msg=bad):
+                    config.load(p)
+
+    def test_int_is_accepted_where_a_float_is_expected(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d, "c.toml")
+            p.write_text("[quota]\nevaluator_5h = 1\n")
+            self.assertEqual(config.load(p).quota.evaluator_5h, 1)
+
     def test_example_file_loads_and_equals_defaults(self):
         ex = Path(__file__).parent.parent / "route-task.example.toml"
         self.assertEqual(vars(config.load(ex).quota), vars(config.load(None).quota))

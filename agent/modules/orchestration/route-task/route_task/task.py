@@ -2,7 +2,9 @@
 import re
 from dataclasses import dataclass, field
 
-TIERS = ("economy", "premium", "auto")
+from .routing import TIERS as _TIERS
+
+TIERS = _TIERS + ("auto",)
 PRIVACY = ("open", "private")
 LISTS = ("gate", "acceptance")
 SCALARS = ("title", "repo", "tier", "privacy")

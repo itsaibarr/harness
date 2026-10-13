@@ -3,10 +3,9 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime
 from pathlib import Path
 
-from . import batch, config, events, guard, notify, run, task
+from . import batch, config, events, guard, notify, report, run, task
 from .agents import Agents, ClaudeAgent, LockedAgent, OpenCodeAgent
 
 
@@ -65,10 +64,10 @@ def _cmd_resume(args, cfg):
 def _cmd_status(args, cfg):
     runs = sorted((cfg.state_dir / "runs").glob("*/state.json")) if (cfg.state_dir / "runs").exists() else []
     for p in runs:
-        s = json.loads(p.read_text())
+        s = events.RunDir(p.parent).state
         extra = ""
-        if s["status"] == "waiting_quota" and s.get("resume_after"):
-            extra = f"  (resume after {datetime.fromtimestamp(s['resume_after']):%a %H:%M}: {s.get('quota_reason', '')})"
+        if s["status"] == "waiting_quota":
+            extra = f"  ({report.resume_note(s.get('resume_after'), s.get('quota_reason', ''))})"
         print(f"{s['run_id']}  {s['status']:<14}  {s.get('stage', ''):<14}  {s['task']['title']}  {s.get('branch', '')}{extra}")
     if not runs:
         print("no runs yet")
