@@ -98,10 +98,10 @@ class OpenCodeAgent:
         r.text = "\n".join(texts)
         if errors:
             r.error = "; ".join(errors)
-        elif rc:
-            r.error = (err or out).strip()[-300:]
         elif timed_out:
             r.error = "timeout"
+        elif rc:
+            r.error = (err or out).strip()[-300:]
         r.ok = rc == 0 and not errors and not timed_out and not stopped
         return r
 

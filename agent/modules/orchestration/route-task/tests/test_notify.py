@@ -21,6 +21,14 @@ class SendTest(unittest.TestCase):
         self.assertIn('display notification "done: \\\\ and \\"quotes\\""', argv[2])
         self.assertIn('with title "Run \\"x\\""', argv[2])
 
+    @unittest.skipUnless(sys.platform == "darwin", "osascript is macOS only")
+    def test_non_ascii_text_is_passed_literally_not_as_u_escapes(self):
+        with mock.patch("route_task.notify.subprocess.run") as m:
+            notify.send("route-task: Фикс ошибки", "done: готово")
+        script = m.call_args.args[0][2]
+        self.assertIn("Фикс ошибки", script)
+        self.assertNotIn("\\u04", script)
+
     def test_never_raises_when_osascript_is_missing_or_slow(self):
         for exc in (OSError("no osascript"), __import__("subprocess").TimeoutExpired("osascript", 10)):
             with mock.patch("route_task.notify.subprocess.run", side_effect=exc):

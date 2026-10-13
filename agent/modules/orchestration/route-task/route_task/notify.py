@@ -7,7 +7,8 @@ import sys
 def send(title, message):
     if sys.platform != "darwin":
         return
-    script = f"display notification {json.dumps(message)} with title {json.dumps(title)}"
+    script = (f"display notification {json.dumps(message, ensure_ascii=False)} "
+              f"with title {json.dumps(title, ensure_ascii=False)}")
     try:
         subprocess.run(["osascript", "-e", script], capture_output=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):

@@ -71,6 +71,20 @@ class WorkerPathTest(RunBase):
         self.assertIn(".route-task/handoff.md", oc.calls[0]["prompt"])
 
 
+class NoChangeTest(RunBase):
+    def test_worker_that_changes_nothing_is_a_failed_attempt_even_if_the_gate_passes(self):
+        oc, cl = ScriptedAgent({}, {}), ScriptedAgent(OK)
+        r = self.go(make_task(gate=("true",)), Agents(oc, cl))
+        self.assertIn("no changes", r.state["history"][0]["outcome"])
+        self.assertEqual(len(oc.calls), 2)
+        self.assertEqual(len(cl.calls), 1)
+        self.assertEqual(r.state["status"], "done")  # premium made a change and the gate passed
+
+    def test_premium_that_changes_nothing_ends_needs_human(self):
+        r = self.go(make_task(gate=("true",)), Agents(ScriptedAgent({}, {}), ScriptedAgent({})))
+        self.assertEqual(r.state["status"], "needs_human")
+
+
 class EscalationTest(RunBase):
     def test_two_worker_failures_trigger_exactly_one_premium_that_fixes(self):
         oc, cl = ScriptedAgent(BAD, BAD), ScriptedAgent(OK)

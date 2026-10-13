@@ -34,6 +34,11 @@ class QuotaGate:
             if rate_limit and _parse(rate_limit):
                 self.last, self.at = rate_limit, self.now()
 
+    def invalidate(self):
+        """Forget the cached reading (e.g. after sleeping through a window) so the next check re-probes."""
+        with self._lock:
+            self.at = 0.0
+
     def _fresh(self):
         return self.last is not None and self.now() - self.at <= self.cfg.quota.probe_ttl_s
 

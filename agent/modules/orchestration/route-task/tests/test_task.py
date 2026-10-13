@@ -52,6 +52,12 @@ class TaskParseTest(unittest.TestCase):
         with self.assertRaises(task.TaskError):
             task.parse("---\ntitle: x\nprivacy: maybe\n---\n")
 
+    def test_hash_in_title_and_list_items_is_preserved_not_treated_as_comment(self):
+        t = task.parse("---\ntitle: Fix login bug #123\ngate:\n  - grep -c ' #todo' file\n  - bash -c 'echo a #b'\nacceptance:\n  - handles issue #7\n---\n")
+        self.assertEqual(t.title, "Fix login bug #123")
+        self.assertEqual(t.gate, ["grep -c ' #todo' file", "bash -c 'echo a #b'"])
+        self.assertEqual(t.acceptance, ["handles issue #7"])
+
     def test_unknown_key_is_error(self):
         with self.assertRaises(task.TaskError):
             task.parse("---\ntitle: x\ngates:\n  - a\n---\n")

@@ -64,6 +64,8 @@ def _run_stage(ctx, stage, agent_name, model, call):
         ctx.attempts[stage] -= 1  # an interrupted attempt does not count against the cap
     elif not r.ok:
         outcome = f"agent error: {r.error}"
+    elif not ctx.wt.diff().strip():
+        outcome = "no changes made"  # an agent that edited nothing has not done the task, whatever the gate says
     else:
         gate_res = gatemod.run(ctx.task.gate, ctx.wt.path, ctx.env, ctx.cfg.limits.gate_timeout_s)
         ctx.gate_text = gate_res.summary()
@@ -129,6 +131,8 @@ def _step_eval(ctx):
     v = evaluator.evaluate(ctx.agents.claude, ctx.task, ctx.wt.path, ctx.wt.diff(), ctx.gate_text,
                            model=cfg.evaluator.model, timeout=cfg.limits.claude_timeout_s, should_stop=ctx.should_stop)
     ctx.quota.update(v.rate_limit)
+    if v.malformed:
+        v.call_failed, v.error = True, "returned a malformed verdict twice"  # evaluator problem, not a code failure
     if v.call_failed:
         outcome = f"evaluator unavailable: {v.error}"
         ctx.error = outcome
@@ -178,6 +182,7 @@ def _drive(ctx, wait, sleep, now):
                     break
                 sleep(min(WAIT_CHUNK_S, ctx.resume_after - now()))
             else:
+                ctx.quota.invalidate()  # the cached reading predates the wait; re-probe instead of spinning on it
                 status = _loop(ctx)
                 continue
             break
@@ -216,6 +221,20 @@ def run_task(task, cfg, agents, repo=None, should_stop=None, run_id=None, is_pub
     run = events.RunDir.create(cfg.state_dir / "runs", run_id, {
         "status": "running", "stage": "intake", "task": asdict(task), "repo": str(repo),
         "attempts": {"worker": 0, "premium": 0}, "history": []})
+    try:
+        return _start(run, task, cfg, agents, repo, should_stop, is_public, quota, wait, sleep, now, notify)
+    except Exception as e:  # setup-time crash (classifier, worktree, ...): visible, and isolated from other tasks
+        run.update(status="failed", error=f"{type(e).__name__}: {e}")
+        run.log("run_error", error=run.state["error"])
+        run.log("run_finished", status="failed")
+        report.write(run)
+        _notify(notify, task.title, "failed", f": {run.state['error']}")
+        return run
+
+
+def _start(run, task, cfg, agents, repo, should_stop, is_public, quota, wait, sleep, now, notify):
+    run_id = run.path.name
+    should_stop = should_stop or (lambda: False)
     tier, why = routing.static(task, cfg)
     economy_model = cfg.economy.model
     if tier != "premium":
@@ -257,13 +276,16 @@ def run_task(task, cfg, agents, repo=None, should_stop=None, run_id=None, is_pub
 def resume_task(run, cfg, agents, should_stop=None, quota=None, wait=False, sleep=time.sleep, now=time.time, notify=None):
     """Continue a parked / stopped / interrupted run from its persisted `next` step (completed stages are not redone)."""
     s = run.state
-    if s["status"] in ("done", "needs_human", "failed"):
+    if s["status"] in ("done", "needs_human") or (s["status"] == "failed" and "next" not in s):
         raise ValueError(f"run {s['run_id']} is {s['status']}; nothing to resume")
-    wt = worktree.open_(s["repo"], s["run_id"], cfg.state_dir / "worktrees", s["base_sha"])
+    try:
+        wt = worktree.open_(s["repo"], s["run_id"], cfg.state_dir / "worktrees", s["base_sha"])
+    except worktree.WorktreeError as e:
+        raise ValueError(f"cannot resume {s['run_id']}: {e}") from e
     ctx = Ctx(Task(**s["task"]), cfg, agents, run, wt, should_stop or (lambda: False), s["economy_model"],
               quota or default_quota(cfg, agents), s.get("tier", "economy"), notify)
     ctx.history, ctx.attempts = s["history"], s["attempts"]
-    ctx.gate_text, ctx.issues, ctx.error = s.get("gate_text", ""), s.get("issues", []), s.get("error", "")
+    ctx.gate_text, ctx.issues, ctx.error = s.get("gate_text", ""), s.get("issues", []), ""
     ctx.next, ctx.last_stage = s["next"], s.get("last_stage")
     run.update(status="running")
     run.log("run_resumed", next=ctx.next)

@@ -83,6 +83,7 @@ class OpenCodeAgentTest(AgentTestBase):
         r = self.agent(STUB_OC="hang").run("p", self.cwd, model="m", timeout=1)
         self.assertTrue(r.timed_out)
         self.assertFalse(r.ok)
+        self.assertEqual(r.error, "timeout")
         self.assertLess(time.time() - t0, 15)
 
 

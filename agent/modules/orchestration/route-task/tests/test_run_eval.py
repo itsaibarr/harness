@@ -99,12 +99,14 @@ class EvaluatorFlowTest(EvalBase):
         self.assertIn("rate limited", r.state["error"])
         self.assertIn("evaluator", (r.path / "report.md").read_text().lower())
 
-    def test_malformed_verdicts_count_as_a_failed_evaluation(self):
+    def test_malformed_verdicts_are_an_evaluator_problem_not_a_code_failure(self):
         junk = {"structured": {"nope": 1}}
         oc, cl = ScriptedAgent(OK, OK), ScriptedAgent(junk, junk, PASS)
         r = self.go(make_task(), oc, cl)
-        self.assertEqual(len(oc.calls), 2)  # first eval (2 junk calls) failed -> second worker attempt
-        self.assertEqual(r.state["status"], "done")
+        self.assertEqual(r.state["status"], "needs_human")
+        self.assertEqual(len(oc.calls), 1)  # no worker attempt burned, no premium
+        self.assertEqual(sum(c["mode"] == "full" for c in cl.calls), 0)
+        self.assertIn("malformed", r.state["error"])
 
     def test_premium_tier_runs_premium_then_a_single_eval(self):
         oc, cl = ScriptedAgent(), ScriptedAgent(OK, PASS)

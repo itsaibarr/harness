@@ -125,6 +125,19 @@ class BatchTest(unittest.TestCase):
         runs = batch.run_batch(ts, self.cfg, Agents(oc, ScriptedAgent()), jobs=3, repo=self.repo)
         self.assertEqual([r.state["task"]["title"] for r in runs], ["task 0", "task 1", "task 2"])
 
+    def test_setup_time_crash_is_isolated_per_task(self):
+        class Dead:
+            def run(self, *a, **k):
+                raise FileNotFoundError("opencode: not found")
+
+        self.cfg.routing.classifier = True  # the classifier call runs during run_task setup
+        ts = [make_task(tier="auto"), make_task(tier="auto")]
+        for t in ts:
+            t.body = "rename a variable"
+        runs = batch.run_batch(ts, self.cfg, Agents(Dead(), ScriptedAgent()), jobs=2, repo=self.repo)
+        self.assertEqual([r.state["status"] for r in runs], ["failed", "failed"])
+        self.assertIn("not found", runs[0].state["error"])
+
     def test_one_crashing_task_does_not_take_down_the_others(self):
         class Boom:
             def __init__(self):

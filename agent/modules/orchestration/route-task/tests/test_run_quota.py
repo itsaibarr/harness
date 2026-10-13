@@ -113,6 +113,36 @@ class ResumeTest(QuotaRunBase):
         self.assertEqual(r2.state["attempts"]["premium"], 1)
 
 
+class ResumeEdgeTest(QuotaRunBase):
+    def test_crashed_run_that_reached_a_step_can_be_resumed(self):
+        class Boom:
+            def run(self, *a, **k):
+                raise RuntimeError("provider exploded")
+
+        self.cfg.quota.enabled = False
+        self.cfg.evaluator.enabled = False
+        r = run.run_task(make_task(), self.cfg, Agents(Boom(), ScriptedAgent()), repo=self.repo)
+        self.assertEqual(r.state["status"], "failed")
+        r2 = run.resume_task(r, self.cfg, Agents(ScriptedAgent(OK), ScriptedAgent()))
+        self.assertEqual(r2.state["status"], "done")
+
+    def test_run_that_failed_before_starting_cannot_be_resumed(self):
+        self.cfg.economy.trains_on_data = True  # private task + training model -> refused at intake
+        r = run.run_task(make_task(privacy="private"), self.cfg, Agents(ScriptedAgent(), ScriptedAgent()), repo=self.repo,
+                         is_public=lambda: False)
+        with self.assertRaises(ValueError) as cm:
+            run.resume_task(r, self.cfg, Agents(ScriptedAgent(), ScriptedAgent()))
+        self.assertIn("nothing to resume", str(cm.exception))
+
+    def test_missing_worktree_is_a_clear_error(self):
+        import shutil
+        r = self.go(ScriptedAgent(OK), ScriptedAgent(), self.gate(rl(0.90, 0.10)))
+        shutil.rmtree(r.state["worktree"])
+        with self.assertRaises(ValueError) as cm:
+            run.resume_task(r, self.cfg, Agents(ScriptedAgent(), ScriptedAgent()))
+        self.assertIn("worktree", str(cm.exception))
+
+
 class WaitModeTest(QuotaRunBase):
     def test_wait_sleeps_until_the_window_resets_then_finishes(self):
         slept = []
@@ -126,6 +156,22 @@ class WaitModeTest(QuotaRunBase):
         self.assertEqual(r.state["status"], "done")
         self.assertGreaterEqual(sum(slept), 3600 - 1)
         self.assertEqual(len(oc.calls), 1)
+
+    def test_after_waking_it_takes_a_fresh_reading_instead_of_spinning_on_the_cached_one(self):
+        probe = Probe(rl(0.90, 0.10, h_reset=T0 + 10), rl(0.10, 0.10))  # resets 10s later, inside the 60s cache TTL
+        g = quota.QuotaGate(self.cfg, probe, now=self.clock)
+        calls = {"n": 0}
+
+        def stop():
+            calls["n"] += 1
+            return calls["n"] > 200  # a spin would burn through this
+
+        def sleep(s):
+            self.clock.t += s
+
+        r = self.go(ScriptedAgent(OK), ScriptedAgent(PASS), g, wait=True, sleep=sleep, now=self.clock, should_stop=stop)
+        self.assertEqual(r.state["status"], "done")
+        self.assertEqual(probe.calls, 2)
 
     def test_kill_switch_interrupts_waiting(self):
         n = {"sleeps": 0}

@@ -38,16 +38,16 @@ def parse(text):
             continue
         item = re.match(r"\s+-\s+(.*)", line)
         if item and key in LISTS:
-            fields.setdefault(key, []).append(_strip_comment(item.group(1)))
+            fields.setdefault(key, []).append(item.group(1).strip())  # '#' is legal in shell gates: never strip
             continue
         kv = re.match(r"([a-z_]+):\s*(.*)", line)
         if not kv:
             raise TaskError(f"cannot parse front matter line: {line!r}")
-        key, val = kv.group(1), _strip_comment(kv.group(2))
+        key, val = kv.group(1), kv.group(2).strip()
         if key not in LISTS + SCALARS:
             raise TaskError(f"unknown task key: {key}")
         if key in SCALARS:
-            fields[key] = val
+            fields[key] = val if key == "title" else _strip_comment(val)  # titles may contain '#123' 
         else:
             fields.setdefault(key, [])
     if not fields.get("title"):
