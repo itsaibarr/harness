@@ -16,8 +16,9 @@ PREMIUM_PROMPT = (
 
 
 class Ctx:
-    def __init__(self, task, cfg, agents, run, wt, should_stop):
+    def __init__(self, task, cfg, agents, run, wt, should_stop, economy_model):
         self.task, self.cfg, self.agents, self.run, self.wt, self.should_stop = task, cfg, agents, run, wt, should_stop
+        self.economy_model = economy_model
         self.env = guard.child_env(cfg)
         self.history, self.attempts, self.gate_text, self.issues = [], {"worker": 0, "premium": 0}, "", []
         self.error = ""
@@ -82,8 +83,8 @@ def _attempt(ctx, stage, agent_name, model, call):
 
 def _worker(ctx):
     _handoff(ctx, "Do the task. If an earlier attempt failed, fix exactly what the gate output says; keep the diff small.")
-    return _attempt(ctx, "worker", "opencode", ctx.cfg.economy.model, lambda: ctx.agents.opencode.run(
-        WORKER_PROMPT, ctx.wt.path, model=ctx.cfg.economy.model, timeout=ctx.cfg.limits.worker_timeout_s,
+    return _attempt(ctx, "worker", "opencode", ctx.economy_model, lambda: ctx.agents.opencode.run(
+        WORKER_PROMPT, ctx.wt.path, model=ctx.economy_model, timeout=ctx.cfg.limits.worker_timeout_s,
         should_stop=ctx.should_stop))
 
 
@@ -117,13 +118,25 @@ def _pipeline(ctx):
     return "needs_human"
 
 
-def run_task(task, cfg, agents, repo=None, should_stop=None, run_id=None):
+def run_task(task, cfg, agents, repo=None, should_stop=None, run_id=None, is_public=None):
     should_stop = should_stop or (lambda: False)
     run_id = run_id or events.new_run_id(task.title)
     repo = Path(task.repo or repo or ".").expanduser().resolve()
     run = events.RunDir.create(cfg.state_dir / "runs", run_id, {
         "status": "running", "stage": "intake", "task": asdict(task), "repo": str(repo),
         "attempts": {"worker": 0, "premium": 0}, "history": []})
+    economy_model = cfg.economy.model
+    if task.tier != "premium":
+        try:
+            economy_model = guard.economy_model(cfg, task, is_public or (lambda: guard.repo_is_public(repo)))
+            if cfg.economy.trains_on_data:
+                run.log("privacy_guard", decision="allowed", model=economy_model, privacy=task.privacy)
+        except guard.PrivacyRefused as e:
+            run.update(status="failed", error=f"privacy guard: {e}")
+            run.log("privacy_guard", decision="refused", model=cfg.economy.model, privacy=task.privacy, reason=str(e))
+            run.log("run_finished", status="failed")
+            report.write(run)
+            return run
     try:
         wt = worktree.create(repo, run_id, cfg.state_dir / "worktrees")
     except worktree.WorktreeError as e:
@@ -132,7 +145,7 @@ def run_task(task, cfg, agents, repo=None, should_stop=None, run_id=None):
         report.write(run)
         return run
     run.update(worktree=str(wt.path), branch=wt.branch, base_sha=wt.base_sha)
-    ctx = Ctx(task, cfg, agents, run, wt, should_stop)
+    ctx = Ctx(task, cfg, agents, run, wt, should_stop, economy_model)
     status = _pipeline(ctx)
     run.update(status=status, stage="finished", **({"error": ctx.error} if ctx.error else {}))
     run.log("run_finished", status=status)

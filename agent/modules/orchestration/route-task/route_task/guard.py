@@ -5,6 +5,7 @@ Enforcement = the scrubbed env (git/gh cannot authenticate, whatever the invocat
 """
 import json
 import os
+import subprocess
 from pathlib import Path
 
 ALLOW = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "SHELL",
@@ -47,3 +48,31 @@ def claude_deny_arg():
 def opencode_permission():
     # OpenCode: last matching rule wins, so the catch-all allow goes first.
     return json.dumps({"bash": {"*": "allow", **{p: "deny" for p in DENY}}, "edit": "allow"})
+
+
+class PrivacyRefused(RuntimeError):
+    pass
+
+
+def repo_is_public(repo):
+    """True only if `gh` says the repo is public and not a fork. Fails closed (False) on any error."""
+    try:
+        r = subprocess.run(["gh", "repo", "view", "--json", "isPrivate,isFork", "-q", "(.isPrivate|not) and (.isFork|not)"],
+                           cwd=repo, capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return r.returncode == 0 and r.stdout.strip() == "true"
+
+
+def economy_model(cfg, task, is_public):
+    """Pick the OpenCode model for the task, refusing to send private code to a model that trains on prompts."""
+    e = cfg.economy
+    if not e.trains_on_data or task.privacy == "open":
+        return e.model
+    if e.private_model:
+        return e.private_model
+    if is_public():
+        return e.model
+    raise PrivacyRefused(
+        f"{e.model} trains on prompts and this task is private. Set `privacy: open` in the task file, "
+        "or set economy.private_model in the config to a zero-retention model.")
