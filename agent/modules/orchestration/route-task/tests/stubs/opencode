@@ -8,6 +8,7 @@ if log:
         f.write(json.dumps({"tool": "opencode", "argv": sys.argv[1:], "env": dict(os.environ), "cwd": os.getcwd()}) + "\n")
 
 mode = os.environ.get("STUB_OC", "ok")
+time.sleep(float(os.environ.get("STUB_OC_SLEEP", "0")))
 sid = "ses_stub1"
 if os.environ.get("STUB_WRITE"):
     open(os.path.join(os.getcwd(), os.environ["STUB_WRITE"]), "w").write("worker output\n")

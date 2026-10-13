@@ -36,7 +36,7 @@ class Ctx:
                         gate_text=self.gate_text, issues=self.issues, error=self.error, quota=self.quota.last)
 
 
-def _default_quota(cfg, agents):
+def default_quota(cfg, agents):
     def probe():
         cfg.state_dir.mkdir(parents=True, exist_ok=True)
         return agents.claude.run(PROBE_PROMPT, cfg.state_dir, model="haiku", mode="readonly", timeout=90).rate_limit
@@ -236,7 +236,7 @@ def run_task(task, cfg, agents, repo=None, should_stop=None, run_id=None, is_pub
         report.write(run)
         return run
     run.update(worktree=str(wt.path), branch=wt.branch, base_sha=wt.base_sha, economy_model=economy_model)
-    ctx = Ctx(task, cfg, agents, run, wt, should_stop, economy_model, quota or _default_quota(cfg, agents), tier)
+    ctx = Ctx(task, cfg, agents, run, wt, should_stop, economy_model, quota or default_quota(cfg, agents), tier)
     return _drive(ctx, wait, sleep, now)
 
 
@@ -247,7 +247,7 @@ def resume_task(run, cfg, agents, should_stop=None, quota=None, wait=False, slee
         raise ValueError(f"run {s['run_id']} is {s['status']}; nothing to resume")
     wt = worktree.open_(s["repo"], s["run_id"], cfg.state_dir / "worktrees", s["base_sha"])
     ctx = Ctx(Task(**s["task"]), cfg, agents, run, wt, should_stop or (lambda: False), s["economy_model"],
-              quota or _default_quota(cfg, agents), s.get("tier", "economy"))
+              quota or default_quota(cfg, agents), s.get("tier", "economy"))
     ctx.history, ctx.attempts = s["history"], s["attempts"]
     ctx.gate_text, ctx.issues, ctx.error = s.get("gate_text", ""), s.get("issues", []), s.get("error", "")
     ctx.next, ctx.last_stage = s["next"], s.get("last_stage")

@@ -1,12 +1,13 @@
-"""route-task CLI: run | status | report | stop."""
+"""route-task CLI: run | resume | status | report | stop."""
 import argparse
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
-from . import config, events, guard, run, task
-from .agents import Agents, ClaudeAgent, OpenCodeAgent
+from . import batch, config, events, guard, run, task
+from .agents import Agents, ClaudeAgent, LockedAgent, OpenCodeAgent
 
 
 def _load_cfg(path):
@@ -17,30 +18,53 @@ def _load_cfg(path):
     return config.load(path)
 
 
-def _cmd_run(args, cfg):
-    stop_file = cfg.state_dir / "STOP"
+def _agents(cfg):
     env = guard.child_env(cfg)
-    agents = Agents(OpenCodeAgent(env), ClaudeAgent(env))
-    worst = 0
+    cfg.state_dir.mkdir(parents=True, exist_ok=True)
+    return Agents(OpenCodeAgent(env), LockedAgent(ClaudeAgent(env), cfg.state_dir / "claude.lock"))
+
+
+def _line(r):
+    s = r.state
+    return f"{r.path.name}  {s['status']}  {s.get('branch', '')}  report: {r.path / 'report.md'}"
+
+
+def _cmd_run(args, cfg):
+    tasks, worst = [], 0
     for f in args.tasks:
         try:
-            t = task.parse(Path(f).read_text())
+            tasks.append(task.parse(Path(f).read_text()))
         except (task.TaskError, OSError) as e:
             print(f"{f}: {e}", file=sys.stderr)
             worst = 1
-            continue
-        r = run.run_task(t, cfg, agents, repo=args.repo, should_stop=stop_file.exists)
-        s = r.state
-        print(f"{r.path.name}  {s['status']}  {s.get('branch', '')}  report: {r.path / 'report.md'}")
-        worst = worst or (0 if s["status"] == "done" else 1)
+    wait = args.wait if args.wait is not None else len(tasks) > 1
+    runs = batch.run_batch(tasks, cfg, _agents(cfg), jobs=args.jobs, repo=args.repo,
+                           should_stop=(cfg.state_dir / "STOP").exists, wait=wait)
+    for r in runs:
+        print(_line(r))
+        worst = worst or (0 if r.state["status"] == "done" else 1)
     return worst
+
+
+def _cmd_resume(args, cfg):
+    try:
+        r = events.RunDir.open(cfg.state_dir / "runs", args.run_id)
+        r = run.resume_task(r, cfg, _agents(cfg), should_stop=(cfg.state_dir / "STOP").exists, wait=bool(args.wait))
+    except (FileNotFoundError, ValueError) as e:
+        print(e, file=sys.stderr)
+        return 1
+    print(_line(r))
+    return 0 if r.state["status"] == "done" else 1
 
 
 def _cmd_status(args, cfg):
     runs = sorted((cfg.state_dir / "runs").glob("*/state.json")) if (cfg.state_dir / "runs").exists() else []
     for p in runs:
         s = json.loads(p.read_text())
-        print(f"{s['run_id']}  {s['status']:<14}  {s.get('stage', ''):<10}  {s['task']['title']}  {s.get('branch', '')}")
+        extra = ""
+        if s["status"] == "waiting_quota" and s.get("resume_after"):
+            extra = f"  (resume after {datetime.fromtimestamp(s['resume_after']):%a %H:%M}: {s.get('quota_reason', '')})"
+        print(f"{s['run_id']}  {s['status']:<14}  {s.get('stage', ''):<14}  {s['task']['title']}  {s.get('branch', '')}{extra}")
     if not runs:
         print("no runs yet")
     return 0
@@ -70,6 +94,12 @@ def main(argv=None):
     p = sub.add_parser("run")
     p.add_argument("tasks", nargs="+")
     p.add_argument("--repo")
+    p.add_argument("--jobs", type=int, default=1, help="tasks to run concurrently (one worktree each; one Claude call at a time)")
+    p.add_argument("--wait", action=argparse.BooleanOptionalAction, default=None,
+                   help="sleep through quota windows instead of parking (default: on for batches)")
+    p = sub.add_parser("resume")
+    p.add_argument("run_id")
+    p.add_argument("--wait", action=argparse.BooleanOptionalAction, default=False)
     sub.add_parser("status")
     p = sub.add_parser("report")
     p.add_argument("run_id")
@@ -83,4 +113,4 @@ def main(argv=None):
     except (config.ConfigError, OSError) as e:
         print(f"config error: {e}", file=sys.stderr)
         return 2
-    return {"run": _cmd_run, "status": _cmd_status, "report": _cmd_report, "stop": _cmd_stop}[args.cmd](args, cfg)
+    return {"run": _cmd_run, "resume": _cmd_resume, "status": _cmd_status, "report": _cmd_report, "stop": _cmd_stop}[args.cmd](args, cfg)
