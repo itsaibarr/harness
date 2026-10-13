@@ -23,6 +23,7 @@ class EvalBase(unittest.TestCase):
         self.cfg = config.load(None)
         self.cfg.state_dir = self.root / "state"
         self.cfg.economy.trains_on_data = False
+        self.cfg.quota.enabled = False
 
     def tearDown(self):
         self._tmp.cleanup()

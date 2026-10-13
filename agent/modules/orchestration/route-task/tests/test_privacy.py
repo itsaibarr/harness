@@ -59,6 +59,7 @@ class RunPrivacyTest(unittest.TestCase):
         self.cfg = cfg()
         self.cfg.state_dir = self.root / "state"
         self.cfg.evaluator.enabled = False
+        self.cfg.quota.enabled = False
 
     def tearDown(self):
         self._tmp.cleanup()

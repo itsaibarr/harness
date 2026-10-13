@@ -28,6 +28,7 @@ premium_7d = 0.80
 pacing = true       # refuse unattended Claude spend when 7d utilization > week_elapsed + pacing_slack
 pacing_slack = 0.15
 probe_ttl_s = 60
+enabled = true       # false = never read or gate on quota (tests only)
 
 [env]
 extra = []          # extra environment variable names to pass to children

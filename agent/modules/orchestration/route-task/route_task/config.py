@@ -27,6 +27,7 @@ DEFAULTS = {
         "pacing_slack": 0.15,
         "pacing": True,
         "probe_ttl_s": 60,
+        "enabled": True,
     },
     "env": {"extra": []},  # extra env var names to pass through to children
 }

@@ -18,7 +18,7 @@ class CliTest(unittest.TestCase):
         self.repo = make_repo(self.root)
         self.state = self.root / "state"
         self.cfg = self.root / "cfg.toml"
-        self.cfg.write_text(f'state_dir = "{self.state}"\n[economy]\ntrains_on_data = false\n[evaluator]\nenabled = false\n'
+        self.cfg.write_text(f'state_dir = "{self.state}"\n[economy]\ntrains_on_data = false\n[evaluator]\nenabled = false\n[quota]\nenabled = false\n'
                             '[env]\nextra = ["STUB_WRITE", "STUB_LOG", "STUB_OC", "STUB_CL"]\n')
         self.task = self.root / "task.md"
         self.task.write_text(f"---\ntitle: Make out\nrepo: {self.repo}\nprivacy: open\ngate:\n  - test -f out.txt\n---\nCreate out.txt.")
