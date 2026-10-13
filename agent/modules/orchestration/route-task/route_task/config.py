@@ -10,7 +10,7 @@ DEFAULTS = {
         "trains_on_data": True,
         "private_model": "",  # used for privacy: private tasks when `model` trains on data
     },
-    "evaluator": {"model": "sonnet"},
+    "evaluator": {"model": "sonnet", "enabled": True},
     "premium": {"model": "opus"},
     "limits": {
         "worker_attempts": 2,

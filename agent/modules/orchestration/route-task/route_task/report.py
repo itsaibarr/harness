@@ -25,6 +25,8 @@ def render(state):
         lines.append("- none known")
     elif status == "needs_human":
         lines.append("- This run needs a human: automated attempts were exhausted. See the last gate output in `events.jsonl` / the worktree handoff.")
+        if state.get("error"):
+            lines.append(f"- {state['error']}")
     elif status == "waiting_quota":
         lines.append(f"- Parked until the Claude quota window resets (resume after {state.get('resume_after')}).")
     elif status == "stopped":

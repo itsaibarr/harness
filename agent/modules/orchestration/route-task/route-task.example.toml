@@ -8,6 +8,7 @@ private_model = ""   # model for `privacy: private` tasks; e.g. a zero-retention
 
 [evaluator]
 model = "sonnet"
+enabled = true
 
 [premium]
 model = "opus"

@@ -1,8 +1,8 @@
-"""State machine: worker -> gate -> (retry with feedback) -> premium -> gate -> done | needs_human."""
+"""State machine: worker -> gate -> evaluator -> (retry with feedback) -> premium -> gate -> evaluator once -> done | needs_human."""
 from dataclasses import asdict
 from pathlib import Path
 
-from . import events, gate as gatemod, guard, handoff, report, worktree
+from . import evaluator, events, gate as gatemod, guard, handoff, report, worktree
 
 WORKER_PROMPT = (
     "Read .route-task/handoff.md in this directory and complete the task it describes by editing files here. "
@@ -20,6 +20,7 @@ class Ctx:
         self.task, self.cfg, self.agents, self.run, self.wt, self.should_stop = task, cfg, agents, run, wt, should_stop
         self.env = guard.child_env(cfg)
         self.history, self.attempts, self.gate_text, self.issues = [], {"worker": 0, "premium": 0}, "", []
+        self.error = ""
 
     def save(self):
         self.run.update(history=self.history, attempts=self.attempts)
@@ -30,8 +31,30 @@ def _handoff(ctx, next_step):
         ctx.task, ctx.history, ctx.wt.diff_stat(), ctx.gate_text, ctx.issues, ctx.wt.files(), next_step))
 
 
+def _evaluate(ctx):
+    """Sonnet verdict on a gate-passing diff. Returns 'pass' | 'fail' | 'escalate' | 'eval_error' | 'stopped'."""
+    cfg = ctx.cfg
+    ctx.run.log("stage_start", stage="eval", model=cfg.evaluator.model)
+    v = evaluator.evaluate(ctx.agents.claude, ctx.task, ctx.wt.path, ctx.wt.diff(), ctx.gate_text,
+                           model=cfg.evaluator.model, timeout=cfg.limits.claude_timeout_s, should_stop=ctx.should_stop)
+    if v.call_failed:
+        outcome, code = f"evaluator unavailable: {v.error}", ("stopped" if ctx.should_stop() else "eval_error")
+        ctx.error = outcome
+    elif v.passed:
+        outcome, code = "eval passed", "pass"
+    else:
+        ctx.issues = v.issues
+        outcome = f"eval failed: {v.reason}"
+        code = "escalate" if v.needs_premium and v.high_severity else "fail"
+    ctx.history.append({"stage": "eval", "agent": "claude", "model": cfg.evaluator.model, "duration_s": v.duration_s,
+                        "outcome": outcome, "gate": "", "session_id": None})
+    ctx.save()
+    ctx.run.log("stage_end", stage="eval", outcome=outcome)
+    return code
+
+
 def _attempt(ctx, stage, agent_name, model, call):
-    """Run one agent call, checkpoint, gate. Returns 'pass' | 'fail' | 'stopped'."""
+    """Run one agent call, checkpoint, gate, then evaluate. Returns 'pass' | 'fail' | 'escalate' | 'eval_error' | 'stopped'."""
     ctx.attempts[stage] += 1
     n = ctx.attempts[stage]
     ctx.run.log("stage_start", stage=stage, attempt=n, agent=agent_name, model=model)
@@ -50,7 +73,11 @@ def _attempt(ctx, stage, agent_name, model, call):
                         "outcome": outcome, "gate": gate_res.summary() if gate_res else "", "session_id": r.session_id})
     ctx.save()
     ctx.run.log("stage_end", stage=stage, attempt=n, outcome=outcome)
-    return "stopped" if r.stopped else ("pass" if outcome == "gate passed" else "fail")
+    if r.stopped:
+        return "stopped"
+    if outcome != "gate passed":
+        return "fail"
+    return _evaluate(ctx) if ctx.cfg.evaluator.enabled else "pass"
 
 
 def _worker(ctx):
@@ -74,8 +101,14 @@ def _pipeline(ctx):
             if ctx.should_stop():
                 return "stopped"
             outcome = _worker(ctx)
-            if outcome != "fail":
-                return "done" if outcome == "pass" else "stopped"
+            if outcome == "pass":
+                return "done"
+            if outcome == "stopped":
+                return "stopped"
+            if outcome == "eval_error":
+                return "needs_human"  # evaluator infrastructure failure must not burn premium
+            if outcome == "escalate":
+                break
     if ctx.attempts["premium"] < ctx.cfg.limits.premium_per_task:
         if ctx.should_stop():
             return "stopped"
@@ -101,7 +134,7 @@ def run_task(task, cfg, agents, repo=None, should_stop=None, run_id=None):
     run.update(worktree=str(wt.path), branch=wt.branch, base_sha=wt.base_sha)
     ctx = Ctx(task, cfg, agents, run, wt, should_stop)
     status = _pipeline(ctx)
-    run.update(status=status, stage="finished")
+    run.update(status=status, stage="finished", **({"error": ctx.error} if ctx.error else {}))
     run.log("run_finished", status=status)
     report.write(run)
     return run

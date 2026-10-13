@@ -23,6 +23,7 @@ class RunBase(unittest.TestCase):
         self.cfg = config.load(None)
         self.cfg.state_dir = self.root / "state"
         self.cfg.economy.trains_on_data = False  # privacy guard is covered in its own tests
+        self.cfg.evaluator.enabled = False  # evaluator flow is covered in test_run_eval
 
     def tearDown(self):
         self._tmp.cleanup()
