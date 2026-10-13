@@ -25,6 +25,15 @@ class WorktreeTest(unittest.TestCase):
         (wt.path / ".route-task" / "handoff.md").write_text("x")
         self.assertEqual(git(wt.path, "status", "--porcelain"), "")
 
+    def test_python_bytecode_is_never_committed_even_without_a_gitignore(self):
+        wt = worktree.create(self.repo, "run1", self.wt_root)
+        (wt.path / "__pycache__").mkdir()
+        (wt.path / "__pycache__" / "m.cpython-314.pyc").write_bytes(b"x")
+        (wt.path / "stray.pyc").write_bytes(b"x")
+        (wt.path / "real.py").write_text("x = 1\n")
+        wt.checkpoint("attempt")
+        self.assertEqual(wt.files(), ["real.py"])
+
     def test_main_checkout_is_untouched(self):
         (self.repo / "sentinel.txt").write_text("keep")
         before = git(self.repo, "status", "--porcelain")

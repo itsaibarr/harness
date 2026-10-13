@@ -4,6 +4,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
+LOCAL_EXCLUDES = (".route-task/", "__pycache__/", "*.pyc")  # never commit our handoff dir or bytecode, whatever the repo ignores
 _CREATE_LOCK = threading.Lock()  # concurrent `git worktree add` on one repo contends for git's config lock
 IDENT = ["-c", "user.name=route-task", "-c", "user.email=route-task@localhost"]
 
@@ -56,8 +57,9 @@ def create(repo, run_id, wt_root):
     exclude = Path(exclude) if Path(exclude).is_absolute() else path / exclude
     exclude.parent.mkdir(parents=True, exist_ok=True)
     have = exclude.read_text() if exclude.exists() else ""
-    if ".route-task/" not in have.splitlines():
-        exclude.write_text(have + ("" if have.endswith("\n") or not have else "\n") + ".route-task/\n")
+    missing = [p for p in LOCAL_EXCLUDES if p not in have.splitlines()]
+    if missing:
+        exclude.write_text(have + ("" if have.endswith("\n") or not have else "\n") + "\n".join(missing) + "\n")
     return Worktree(path, branch, base)
 
 
