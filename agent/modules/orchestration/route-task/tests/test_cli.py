@@ -1,4 +1,6 @@
+import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -90,7 +92,7 @@ class CliTest(unittest.TestCase):
         self.assertLess(elapsed, 4.0)  # three 1.5s workers sequentially would take > 4.5s
 
 
-class CliQuotaTest(unittest.TestCase):
+class CliStubBase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
@@ -111,6 +113,8 @@ class CliQuotaTest(unittest.TestCase):
         return subprocess.run([sys.executable, "-m", "route_task", *args], capture_output=True, text=True,
                               env={**self.env, **env}, cwd=self.root)
 
+
+class CliQuotaTest(CliStubBase):
     def test_quota_parks_then_resume_finishes_without_redoing_the_worker(self):
         r = self.cli("run", str(self.task), "--config", str(self.cfg), "--no-wait", STUB_5H="0.95")
         self.assertNotEqual(r.returncode, 0)
@@ -136,6 +140,54 @@ class CliQuotaTest(unittest.TestCase):
         r = self.cli("resume", "nope", "--config", str(self.cfg))
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("no such run", r.stderr)
+
+
+class CliRecoveryTest(CliStubBase):
+    """SIGKILL the orchestrator mid-run, then `resume`."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg.write_text(f'state_dir = "{self.state}"\n[economy]\ntrains_on_data = false\n[quota]\nenabled = false\n'
+                            '[env]\nextra = ["STUB_WRITE", "STUB_LOG", "STUB_OC", "STUB_CL", "STUB_STRUCT"]\n')
+
+    def tearDown(self):
+        subprocess.run(["pkill", "-f", str(STUBS)], capture_output=True)
+        super().tearDown()
+
+    def wait_for(self, text, timeout=25):
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            for p in (self.state / "runs").glob("*/events.jsonl"):
+                if text in p.read_text():
+                    return p.parent
+            time.sleep(0.1)
+        self.fail(f"never saw {text!r}")
+
+    def kill_during(self, marker, **env):
+        p = subprocess.Popen([sys.executable, "-m", "route_task", "run", str(self.task), "--config", str(self.cfg), "--no-wait"],
+                             env={**self.env, **env}, cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        run_dir = self.wait_for(marker)
+        p.send_signal(signal.SIGKILL)
+        p.wait()
+        p.stdout.close()
+        p.stderr.close()
+        return run_dir
+
+    def test_kill_during_eval_then_resume_does_not_redo_the_worker(self):
+        run_dir = self.kill_during('"stage": "eval"', STUB_CL="hang")
+        self.assertEqual(json.loads((run_dir / "state.json").read_text())["status"], "running")
+        r = self.cli("resume", run_dir.name, "--config", str(self.cfg), STUB_CL="ok")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        events = (run_dir / "events.jsonl").read_text()
+        self.assertEqual(events.count('"type": "stage_start", "stage": "worker"'), 1)
+        self.assertIn("run_resumed", events)
+        self.assertEqual(json.loads((run_dir / "state.json").read_text())["status"], "done")
+
+    def test_kill_during_first_worker_step_is_resumable(self):
+        run_dir = self.kill_during('"stage": "worker"', STUB_OC="hang")
+        r = self.cli("resume", run_dir.name, "--config", str(self.cfg), STUB_OC="ok")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(json.loads((run_dir / "state.json").read_text())["status"], "done")
 
 
 if __name__ == "__main__":
