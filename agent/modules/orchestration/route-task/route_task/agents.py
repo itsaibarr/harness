@@ -4,9 +4,13 @@ import os
 import signal
 import subprocess
 import time
+from collections import namedtuple
 from dataclasses import dataclass, field
 
 from . import guard
+
+
+Agents = namedtuple("Agents", "opencode claude")
 
 
 @dataclass

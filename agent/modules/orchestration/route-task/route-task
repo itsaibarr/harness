@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# route-task launcher: PYTHONPATH points at this directory so `python3 -m route_task` resolves without install.
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHONPATH="$DIR" exec python3 -m route_task "$@"

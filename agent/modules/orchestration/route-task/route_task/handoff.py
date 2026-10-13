@@ -16,6 +16,9 @@ def render(task, attempts, diff_stat, gate_output, issues, files, next_step):
 ## Acceptance
 {_bullets(task.acceptance, str)}
 
+## Gate commands (must exit 0)
+{_bullets(task.gate, str)}
+
 ## Attempts so far
 {_bullets(attempts, lambda a: f"{a['stage']}: {a['agent']} / {a['model']} ({a['duration_s']:.0f}s) -> {a['outcome']}")}
 

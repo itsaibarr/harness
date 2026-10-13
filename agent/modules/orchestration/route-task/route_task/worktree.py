@@ -34,6 +34,12 @@ class Worktree:
     def diff(self):
         return _git(self.path, "diff", self.base_sha, "HEAD").stdout
 
+    def diff_stat(self):
+        return _git(self.path, "diff", "--stat", self.base_sha, "HEAD").stdout
+
+    def files(self):
+        return _git(self.path, "diff", "--name-only", self.base_sha, "HEAD").stdout.split()
+
 
 def create(repo, run_id, wt_root):
     repo = Path(repo)
