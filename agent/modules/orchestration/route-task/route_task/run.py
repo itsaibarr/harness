@@ -6,7 +6,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
-from . import evaluator, events, gate as gatemod, guard, handoff, quota as quotamod, report, worktree
+from . import evaluator, events, gate as gatemod, guard, handoff, quota as quotamod, report, routing, worktree
 from .task import Task
 
 WORKER_PROMPT = (
@@ -23,12 +23,12 @@ WAIT_CHUNK_S = 30
 
 
 class Ctx:
-    def __init__(self, task, cfg, agents, run, wt, should_stop, economy_model, quota):
+    def __init__(self, task, cfg, agents, run, wt, should_stop, economy_model, quota, tier):
         self.task, self.cfg, self.agents, self.run, self.wt = task, cfg, agents, run, wt
         self.should_stop, self.economy_model, self.quota = should_stop, economy_model, quota
         self.env = guard.child_env(cfg)
         self.history, self.attempts, self.gate_text, self.issues = [], {"worker": 0, "premium": 0}, "", []
-        self.next = "premium" if task.tier == "premium" else "worker"
+        self.next = "premium" if tier == "premium" else "worker"
         self.last_stage, self.error, self.resume_after, self.quota_reason = None, "", None, ""
 
     def save(self):
@@ -200,8 +200,9 @@ def run_task(task, cfg, agents, repo=None, should_stop=None, run_id=None, is_pub
     run = events.RunDir.create(cfg.state_dir / "runs", run_id, {
         "status": "running", "stage": "intake", "task": asdict(task), "repo": str(repo),
         "attempts": {"worker": 0, "premium": 0}, "history": []})
+    tier, why = routing.static(task, cfg)
     economy_model = cfg.economy.model
-    if task.tier != "premium":
+    if tier != "premium":
         try:
             economy_model = guard.economy_model(cfg, task, is_public or (lambda: guard.repo_is_public(repo)))
             if cfg.economy.trains_on_data:
@@ -212,6 +213,16 @@ def run_task(task, cfg, agents, repo=None, should_stop=None, run_id=None, is_pub
             run.log("run_finished", status="failed")
             report.write(run)
             return run
+    if tier is None:
+        tier = "economy"
+        if cfg.routing.classifier:
+            cfg.state_dir.mkdir(parents=True, exist_ok=True)
+            c = agents.opencode.run(routing.classify_prompt(task), cfg.state_dir, model=economy_model, timeout=120)
+            picked = routing.parse_classification(c.text) if c.ok else None
+            if picked:
+                tier, why = picked, "classifier"
+    run.update(tier=tier, route_reason=why)
+    run.log("route", tier=tier, reason=why)
     try:
         wt = worktree.create(repo, run_id, cfg.state_dir / "worktrees")
     except worktree.WorktreeError as e:
@@ -220,7 +231,7 @@ def run_task(task, cfg, agents, repo=None, should_stop=None, run_id=None, is_pub
         report.write(run)
         return run
     run.update(worktree=str(wt.path), branch=wt.branch, base_sha=wt.base_sha, economy_model=economy_model)
-    ctx = Ctx(task, cfg, agents, run, wt, should_stop, economy_model, quota or _default_quota(cfg, agents))
+    ctx = Ctx(task, cfg, agents, run, wt, should_stop, economy_model, quota or _default_quota(cfg, agents), tier)
     return _drive(ctx, wait, sleep, now)
 
 
@@ -231,7 +242,7 @@ def resume_task(run, cfg, agents, should_stop=None, quota=None, wait=False, slee
         raise ValueError(f"run {s['run_id']} is {s['status']}; nothing to resume")
     wt = worktree.open_(s["repo"], s["run_id"], cfg.state_dir / "worktrees", s["base_sha"])
     ctx = Ctx(Task(**s["task"]), cfg, agents, run, wt, should_stop or (lambda: False), s["economy_model"],
-              quota or _default_quota(cfg, agents))
+              quota or _default_quota(cfg, agents), s.get("tier", "economy"))
     ctx.history, ctx.attempts = s["history"], s["attempts"]
     ctx.gate_text, ctx.issues, ctx.error = s.get("gate_text", ""), s.get("issues", []), s.get("error", "")
     ctx.next, ctx.last_stage = s["next"], s.get("last_stage")

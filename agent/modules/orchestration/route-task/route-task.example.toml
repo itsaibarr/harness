@@ -30,5 +30,14 @@ pacing_slack = 0.15
 probe_ttl_s = 60
 enabled = true       # false = never read or gate on quota (tests only)
 
+[routing]
+classifier = false   # true: one economy-model call decides economy/premium for `tier: auto` tasks no rule matched
+
+# First match wins; whole-word, case-insensitive; only applies to tasks with `tier: auto`.
+# Setting any [[routes]] replaces the built-in rule.
+[[routes]]
+tier = "premium"
+keywords = ["architecture", "architectural", "security", "threat model", "data migration", "migration plan", "auth", "authentication", "credentials", "payments"]
+
 [env]
 extra = []          # extra environment variable names to pass to children

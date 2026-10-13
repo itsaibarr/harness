@@ -29,6 +29,12 @@ DEFAULTS = {
         "probe_ttl_s": 60,
         "enabled": True,
     },
+    "routing": {"classifier": False},  # one cheap economy-model call for `tier: auto` tasks no rule matched
+    "routes": [  # first match wins; whole-word, case-insensitive; only applies to `tier: auto`
+        {"tier": "premium", "keywords": ["architecture", "architectural", "security", "threat model",
+                                         "data migration", "migration plan", "auth", "authentication",
+                                         "credentials", "payments"]},
+    ],
     "env": {"extra": []},  # extra env var names to pass through to children
 }
 
@@ -55,11 +61,19 @@ def _ns(d):
     return SimpleNamespace(**{k: _ns(v) if isinstance(v, dict) else v for k, v in d.items()})
 
 
+def _check_routes(routes):
+    for r in routes:
+        if (not isinstance(r, dict) or set(r) != {"keywords", "tier"} or r["tier"] not in ("economy", "premium")
+                or not r["keywords"] or not all(isinstance(k, str) for k in r["keywords"])):
+            raise ConfigError(f"bad [[routes]] entry (need keywords=[...] and tier=economy|premium): {r!r}")
+
+
 def load(path):
     data = DEFAULTS
     if path:
         with open(path, "rb") as f:
             data = _merge(DEFAULTS, tomllib.load(f))
+        _check_routes(data["routes"])
     c = _ns(data)
     c.state_dir = Path(c.state_dir).expanduser()
     return c
