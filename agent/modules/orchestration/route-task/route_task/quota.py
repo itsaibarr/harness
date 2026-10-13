@@ -1,5 +1,6 @@
 """Usage-left gate for Claude calls. Works only on observed utilization fractions (from Claude's `rate_limit_event`);
 it never converts utilization into tokens or dollars (not observable) and fails closed when there is no reading."""
+import threading
 import time
 from dataclasses import dataclass
 
@@ -26,15 +27,21 @@ class QuotaGate:
     def __init__(self, cfg, probe, now=time.time):
         self.cfg, self.probe, self.now = cfg, probe, now
         self.last, self.at = None, 0.0
+        self._lock = threading.RLock()
 
     def update(self, rate_limit):
-        if rate_limit and _parse(rate_limit):
-            self.last, self.at = rate_limit, self.now()
+        with self._lock:
+            if rate_limit and _parse(rate_limit):
+                self.last, self.at = rate_limit, self.now()
 
     def _fresh(self):
         return self.last is not None and self.now() - self.at <= self.cfg.quota.probe_ttl_s
 
     def check(self, role):
+        with self._lock:
+            return self._check(role)
+
+    def _check(self, role):
         q = self.cfg.quota
         if not q.enabled:
             return Decision(True)

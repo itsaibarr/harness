@@ -168,17 +168,22 @@ def _loop(ctx):
 
 
 def _drive(ctx, wait, sleep, now):
-    status = _loop(ctx)
-    while status == "waiting_quota" and wait:
-        while now() < ctx.resume_after:
-            if ctx.should_stop():
-                status = "stopped"
-                break
-            sleep(min(WAIT_CHUNK_S, ctx.resume_after - now()))
-        else:
-            status = _loop(ctx)
-            continue
-        break
+    try:
+        status = _loop(ctx)
+        while status == "waiting_quota" and wait:
+            while now() < ctx.resume_after:
+                if ctx.should_stop():
+                    status = "stopped"
+                    break
+                sleep(min(WAIT_CHUNK_S, ctx.resume_after - now()))
+            else:
+                status = _loop(ctx)
+                continue
+            break
+    except Exception as e:  # a crashing task must be visible and must not take other tasks down
+        ctx.error = f"{type(e).__name__}: {e}"
+        ctx.run.log("run_error", error=ctx.error)
+        status = "failed"
     return _finish(ctx, status)
 
 

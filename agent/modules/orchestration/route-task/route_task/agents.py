@@ -1,4 +1,5 @@
 """Adapters that run the official `opencode` / `claude` binaries as subprocesses (existing logins, no credentials read)."""
+import fcntl
 import json
 import os
 import signal
@@ -140,3 +141,25 @@ class ClaudeAgent:
             r.error = "timeout" if timed_out else (err.strip()[-300:] if rc else ("no result event" if not result else ""))
         r.ok = bool(result) and not r.error and rc == 0 and not timed_out and not stopped
         return r
+
+
+class LockedAgent:
+    """Serialises calls through a cross-thread, cross-process file lock (at most one Claude call in flight)."""
+
+    def __init__(self, agent, lock_path, poll=0.2):
+        self.agent, self.lock_path, self.poll = agent, lock_path, poll
+
+    def run(self, *args, should_stop=None, **kw):
+        with open(self.lock_path, "a+") as f:
+            while True:
+                try:
+                    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if should_stop and should_stop():
+                        return StageResult(stopped=True, error="stopped while waiting for the Claude lock")
+                    time.sleep(self.poll)
+            try:
+                return self.agent.run(*args, should_stop=should_stop, **kw)
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)

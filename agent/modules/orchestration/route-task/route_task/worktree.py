@@ -1,8 +1,10 @@
 """One git worktree + branch rt/<run_id> per task. The user's main checkout is never written to."""
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
+_CREATE_LOCK = threading.Lock()  # concurrent `git worktree add` on one repo contends for git's config lock
 IDENT = ["-c", "user.name=route-task", "-c", "user.email=route-task@localhost"]
 
 
@@ -48,7 +50,8 @@ def create(repo, run_id, wt_root):
     base = _git(repo, "rev-parse", "HEAD").stdout.strip()
     path = Path(wt_root) / run_id
     branch = f"rt/{run_id}"
-    _git(repo, "worktree", "add", "-q", "-b", branch, str(path), "HEAD")
+    with _CREATE_LOCK:
+        _git(repo, "worktree", "add", "-q", "-b", branch, str(path), "HEAD")
     exclude = _git(path, "rev-parse", "--git-path", "info/exclude").stdout.strip()
     exclude = Path(exclude) if Path(exclude).is_absolute() else path / exclude
     exclude.parent.mkdir(parents=True, exist_ok=True)
