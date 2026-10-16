@@ -5,13 +5,13 @@ import sys
 import time
 from pathlib import Path
 
-from . import agent
+from . import agent, audit
 from .client import ApiError
 from .config import load_credentials
 from .tools import Tools
 from .trace import Trace
 
-EXIT_OK, EXIT_ERROR, EXIT_BUDGET = 0, 1, 3
+EXIT_OK, EXIT_ERROR, EXIT_BUDGET, EXIT_SCOPE = 0, 1, 3, 4
 
 
 def build_parser():
@@ -61,6 +61,7 @@ def run(a):
     trace = Trace(log, secrets=[key])
     trace.emit("run_start", args={**vars(a), "dir": str(root), "base_url": base}, log=str(log))
     print(f"lane-runner: model={a.model} thinking={a.thinking} dir={root}\n  trace: {log}  (tail -f it)", flush=True)
+    start = audit.snapshot(root)
     r = agent.Runner(a, key, base, trace, Tools(root, a.allow), task.read_text(encoding="utf-8"))
     status, code, note = "error", EXIT_ERROR, ""
     try:
@@ -79,6 +80,20 @@ def run(a):
         status, note = "interrupted", "KeyboardInterrupt"
     except Exception as e:
         note = f"{type(e).__name__}: {e}"
+    violations = []
+    if start is None:
+        trace.emit("scope_audit", ok=True, skipped="not a git work tree", violations=[])
+    else:
+        try:
+            ignore = {p.resolve().relative_to(root).as_posix() for p in (log, Path(str(log) + ".report.md"))
+                      if root in p.resolve().parents}
+            violations = audit.audit(root, start, a.allow, ignore)
+        except Exception as e:  # an audit failure must not be reported as clean
+            violations = [f"(audit failed: {e})"]
+        trace.emit("scope_audit", ok=not violations, violations=violations)
+    if violations:
+        print("lane-runner: SCOPE VIOLATION, changed outside --allow:\n  " + "\n  ".join(violations), flush=True)
+        status, code, note = "scope_violation", EXIT_SCOPE, f"{len(violations)} path(s) outside --allow"
     wall = round(time.time() - r.t0, 1)
     trace.emit("run_end", status=status, note=note, totals=r.totals, wall_s=wall)
     trace.close()

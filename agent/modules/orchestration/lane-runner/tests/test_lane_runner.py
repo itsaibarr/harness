@@ -1,5 +1,5 @@
 import json
-import os
+import subprocess
 
 import pytest
 
@@ -37,6 +37,18 @@ def serve(monkeypatch):
     yield make
     for s in servers:
         s.close()
+
+
+@pytest.fixture
+def gitwork(work):
+    def git(*a):
+        subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *a], cwd=work, check=True,
+                       capture_output=True)
+    git("init", "-q")
+    (work / "src" / "keep.py").write_text("k = 1\n")
+    git("add", "-A")
+    git("commit", "-qm", "init")
+    return work
 
 
 def run(work, *extra, log=None):
@@ -213,3 +225,46 @@ def test_context_truncation():
     n = agent.truncate_history(msgs, 450_000, high=400_000, low=100_000)
     assert n > 0 and msgs[1]["content"] == agent.PLACEHOLDER and msgs[-1]["content"] != agent.PLACEHOLDER
     assert agent.estimate_tokens(msgs) <= 100_000
+
+
+# -- post-run scope audit
+def audit_event(events):
+    return next(e for e in events if e["event"] == "scope_audit")
+
+
+def test_audit_shell_write_outside_scope_exit_4(gitwork, serve, capsys):
+    serve([tool_step("run", {"cmd": "echo x > outside.txt"}), finish_step()])
+    code, events, log = run(gitwork)
+    assert code == 4
+    assert audit_event(events)["violations"] == ["outside.txt"] and not audit_event(events)["ok"]
+    assert events[-1]["status"] == "scope_violation"
+    assert "outside.txt" in capsys.readouterr().out
+    assert log.with_name("t.jsonl.report.md").exists()  # the finish report is still kept
+
+
+def test_audit_violation_beats_budget(gitwork, serve):
+    serve([], loop=tool_step("run", {"cmd": "echo x >> outside.txt"}))
+    code, events, _ = run(gitwork, "--max-steps", "2")
+    assert code == 4 and events[-1]["status"] == "scope_violation"
+
+
+def test_audit_allowed_edits_and_commit_pass(gitwork, serve):
+    commit = "git add src/new.py && git -c user.email=t@t -c user.name=t commit -qm add"
+    serve([tool_step("write_file", {"path": "src/new.py", "content": "n = 1\n"}),
+           tool_step("run", {"cmd": commit}),
+           tool_step("write_file", {"path": "src/keep.py", "content": "k = 2\n"}), finish_step()])
+    code, events, _ = run(gitwork)
+    assert code == 0 and audit_event(events) == {**audit_event(events), "ok": True, "violations": []}
+
+
+def test_audit_catches_committed_outside_file(gitwork, serve):
+    cmd = "echo x > bad.txt && git add bad.txt && git -c user.email=t@t -c user.name=t commit -qm bad"
+    serve([tool_step("run", {"cmd": cmd}), finish_step()])
+    code, events, _ = run(gitwork)
+    assert code == 4 and audit_event(events)["violations"] == ["bad.txt"]
+
+
+def test_audit_ignores_preexisting_dirt(gitwork, serve):
+    (gitwork / "dirty.txt").write_text("before")  # dirty before the run: not the run's doing
+    serve([finish_step()])
+    assert run(gitwork)[0] == 0

@@ -13,7 +13,7 @@ Why: through OpenCode the model spent ~96% of generated tokens on hidden reasoni
     [--max-steps 150] [--max-minutes 120] [--max-total-tokens 3000000] [--log run.jsonl]
 ```
 
-`--task` file is the user message. `--allow` globs (repeatable; none = read-only) are the only paths `write_file`/`edit_file` may touch. Exit codes: `0` finished, `1` unrecoverable error, `3` budget hit, `2` bad CLI usage.
+`--task` file is the user message. `--allow` globs (repeatable; none = read-only) are the only paths `write_file`/`edit_file` may touch. Exit codes: `0` finished, `1` unrecoverable error, `2` bad CLI usage, `3` budget hit, `4` scope violation. `bash install.sh` symlinks the launcher to `~/.local/bin/lane-runner` (idempotent).
 
 Credentials: `MIMO_API_KEY` + `MIMO_BASE_URL`, else provider `mimo` (`options.apiKey`, `options.baseURL`, `{env:NAME}` refs allowed) from `~/.config/opencode/opencode.json`. The key is never printed, never reaches the shell the model runs, and is redacted from the trace.
 
@@ -45,7 +45,9 @@ Tools: `read_file(path, offset?, limit?)` (line numbers), `list_dir(path)`, `gre
 - `run` refuses commands matching: `git push`, `git reset --hard`, `git branch -D`, `git checkout --`, `git clean -f`, `git commit --amend`, `--force`, `rm -rf /`, `sudo`. A refusal is returned to the model as an error result; the run continues.
 - `run` executes with `MIMO_API_KEY`, `MIMO_BASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GH_TOKEN`, `GITHUB_TOKEN`, `SSH_AUTH_SOCK` removed from the environment, no stdin, own process group (killed on timeout).
 
-Limits: the command denylist is string matching, not a sandbox; a determined shell one-liner can evade it, and `run` can touch anything the user can outside `--dir` (writes via shell are not scope-checked, only via `write_file`/`edit_file`). Run it only in a disposable worktree and review the diff. Git itself has no credentials scrubbed beyond the env vars above.
+- Post-run scope audit: when the run ends for any reason and `--dir` is a git work tree, every path changed vs the starting state (`git status --porcelain --untracked-files=all` minus paths already dirty at start, plus `git diff --name-only <start HEAD>..HEAD`; `.lane-runner/` ignored) must match an `--allow` glob. Otherwise a `scope_audit` event (`ok:false`, `violations`) is emitted, the paths are printed, and the run ends with status `scope_violation`, exit 4 (overrides finish, budget and error). Clean runs emit `scope_audit ok:true`; non-git dirs emit it with `skipped`. Gitignored files are invisible to it, and a path already dirty at start that the run edits further is not caught.
+
+Limits: the command denylist is string matching, not a sandbox; a determined shell one-liner can evade it, and `run` can touch anything the user can outside `--dir` (shell writes inside the repo are caught after the fact by the audit; writes outside the repo are not). Run it only in a disposable worktree and review the diff. Git itself has no credentials scrubbed beyond the env vars above.
 
 ## Trace
 
@@ -55,7 +57,7 @@ Default `<dir>/.lane-runner/<timestamp>.jsonl` (added to the repo's `.git/info/e
 tail -f /path/to/worktree/.lane-runner/*.jsonl | jq -c 'select(.event=="reasoning" or .event=="tool_call" or .event=="usage")'
 ```
 
-Events (all have `ts`, `t` = seconds since start): `run_start` (args minus secrets), `step_start` (step, thinking, escalated), `reasoning` / `content` (text; flushed at least every 5 s while streaming, so thinking is live), `tool_call` (name, args; long strings clipped), `tool_result` (name, ok, exit_code, output clipped to 4k chars), `usage` (prompt_tokens, cached_tokens, completion_tokens, reasoning_tokens, latency_s), `retry`, `context_truncated`, `step_end`, `run_end` (status `finished|budget|error|interrupted`, totals, wall_s). On finish the report is also written to `<log>.report.md`. Stdout carries one compact line per step.
+Events (all have `ts`, `t` = seconds since start): `run_start` (args minus secrets), `step_start` (step, thinking, escalated), `reasoning` / `content` (text; flushed at least every 5 s while streaming, so thinking is live), `tool_call` (name, args; long strings clipped), `tool_result` (name, ok, exit_code, output clipped to 4k chars), `usage` (prompt_tokens, cached_tokens, completion_tokens, reasoning_tokens, latency_s), `retry`, `context_truncated`, `step_end`, `scope_audit` (ok, violations), `run_end` (status `finished|budget|error|interrupted|scope_violation`, totals, wall_s). On finish the report is also written to `<log>.report.md`. Stdout carries one compact line per step.
 
 ## Tests
 
