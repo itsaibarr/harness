@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# lane-runner launcher: PYTHONPATH points at this directory so `python3 -m lane_runner` resolves without install.
+# Plain python3 on purpose: stdlib only, no network or uv cache needed at startup. TLS roots come from certifi if
+# the interpreter has it, else the system store (see lane_runner/client.py ssl_context). Resolves symlinks.
+SRC="${BASH_SOURCE[0]}"
+while [ -h "$SRC" ]; do
+  D="$(cd "$(dirname "$SRC")" && pwd)"
+  SRC="$(readlink "$SRC")"
+  [[ "$SRC" != /* ]] && SRC="$D/$SRC"
+done
+DIR="$(cd "$(dirname "$SRC")" && pwd)"
+PYTHONPATH="$DIR" exec python3 -m lane_runner "$@"
